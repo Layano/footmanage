@@ -3,6 +3,7 @@ export interface Club {
   name: string;
   shortName: string;
   leagueId: string;
+  countryCode: string;
   reputation: number;
   budget: number;
   wageBudget: number;

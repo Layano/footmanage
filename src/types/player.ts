@@ -3,6 +3,7 @@ import type {
   OutfieldPlayerAttributes,
   PlayerAttributes,
 } from './attributes';
+import type { AgentRepresentationContract } from './agentContract';
 import type { PlayerPosition } from './positions';
 
 export type { PlayerAttributes, OutfieldPlayerAttributes, GoalkeeperPlayerAttributes };
@@ -23,10 +24,13 @@ export interface PlayerPotential {
 
 export interface PlayerContract {
   clubId: string | null;
-  weeklyWage: number;
+  /** Salaire mensuel brut (€). */
+  monthlyWage: number;
   startDate: string;
   endDate: string;
   releaseClause?: number;
+  /** @deprecated Ancien champ hebdomadaire — migré vers monthlyWage. */
+  weeklyWage?: number;
 }
 
 /**
@@ -60,6 +64,22 @@ interface PlayerBase {
   potentialRating: number;
   /** Équipe actuelle affichée (ex: "AS Montreuil U17 · Ligue Junior"). */
   currentTeam?: string;
+  /** Ville où le joueur a été repéré (tournoi de quartier). */
+  scoutedFromCity?: string;
+  /** Contrat de représentation avec l'agence (si client). */
+  representationContract?: AgentRepresentationContract;
+  /** Minutes jouées cette saison (développement). */
+  seasonMinutes: number;
+  /** Minutes jouées la semaine passée. */
+  weeklyMinutes: number;
+  /** Rôle de temps de jeu promis par le club actuel. */
+  playingTimeRole?: import('@/constants/playingTime').PlayingTimeRole;
+  /** Dernière fenêtre mercato avec offre reçue (ex: "2025-summer"). */
+  lastOfferWindowKey?: string;
+  lastTransferredWeek?: number;
+  lastTransferredSeason?: number;
+  /** Semaines de blessure restantes (clients uniquement). */
+  injuryWeeksRemaining?: number;
 }
 
 export interface OutfieldPlayer extends PlayerBase {

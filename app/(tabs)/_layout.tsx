@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Home, Users, Globe, Wallet } from 'lucide-react-native';
+import { Users, Globe, Wallet, Mail, Trophy } from 'lucide-react-native';
 
 import { TutorialOverlay } from '@/components/TutorialOverlay';
 import { theme } from '@/constants/theme';
@@ -9,7 +9,7 @@ export default function TabLayout() {
   const isTutorialActive = useGameStore((s) => s.isTutorialActive);
   const tutorialStep = useGameStore((s) => s.tutorialStep);
 
-  const tabHref = (name: 'index' | 'players' | 'scouting' | 'finance') => {
+  const tabHref = (name: 'index' | 'players' | 'scouting' | 'finance' | 'competitions') => {
     if (isTabLockedDuringTutorial(name, isTutorialActive, tutorialStep)) {
       return null;
     }
@@ -34,9 +34,9 @@ export default function TabLayout() {
         <Tabs.Screen
           name="index"
           options={{
-            title: 'Tableau de bord',
+            title: 'Boîte mail',
             href: tabHref('index'),
-            tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
+            tabBarIcon: ({ color, size }) => <Mail color={color} size={size} />,
           }}
         />
         <Tabs.Screen
@@ -53,6 +53,14 @@ export default function TabLayout() {
             title: 'Scouting',
             href: tabHref('scouting'),
             tabBarIcon: ({ color, size }) => <Globe color={color} size={size} />,
+          }}
+        />
+        <Tabs.Screen
+          name="competitions"
+          options={{
+            title: 'Compétitions',
+            href: tabHref('competitions'),
+            tabBarIcon: ({ color, size }) => <Trophy color={color} size={size} />,
           }}
         />
         <Tabs.Screen
