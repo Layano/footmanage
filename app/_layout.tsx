@@ -1,12 +1,24 @@
-import { Stack } from 'expo-router';
+import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
 import { GameInitializer } from '@/components/GameInitializer';
 import { theme } from '@/constants/theme';
 
+const navigationTheme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    background: theme.colors.background,
+    card: theme.colors.surface,
+    text: theme.colors.text,
+    border: theme.colors.border,
+    primary: theme.colors.primary,
+  },
+};
+
 export default function RootLayout() {
   return (
-    <>
+    <ThemeProvider value={navigationTheme}>
       <GameInitializer />
       <StatusBar style="light" />
       <Stack
@@ -20,6 +32,6 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="player/[id]" options={{ title: 'Fiche joueur' }} />
       </Stack>
-    </>
+    </ThemeProvider>
   );
 }
