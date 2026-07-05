@@ -53,8 +53,8 @@ function createLeague(countryCode: string, countryName: string, tier: LeagueTier
     reputation: LEAGUE_TIER_REPUTATION[tier],
     seasonWeeks: tier === 'junior' ? 20 : 34,
     transferWindows: {
-      summer: { startWeek: 1, endWeek: 8 },
-      winter: { startWeek: 20, endWeek: 22 },
+      summer: { startWeek: 1, endWeek: 4 },
+      winter: { startWeek: 25, endWeek: 33 },
     },
   };
 }

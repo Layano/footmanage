@@ -53,6 +53,6 @@ export {
 export type { Club } from './club';
 export type { Staff, StaffRole, StaffBonuses } from './staff';
 export type { Agency, AgencyFinances } from './agency';
-export type { ClubContractOffer, OfferType, OfferStatus } from './transfer';
+export type { ClubContractOffer, OfferType, OfferStatus, NegotiableClubOfferTerms } from './transfer';
 export type { MatchFixture, MatchResult, MatchEvent, PlayerMatchStat } from './match';
 export type { GameTime, GameMessage, GameMessageType, GamePhase, InboxAction } from './game';

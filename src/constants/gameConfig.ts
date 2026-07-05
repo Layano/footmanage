@@ -42,17 +42,21 @@ export const GAME_CONFIG = {
   NEGOTIATION_MAX_SPONSORING_SHARE: 30,
 
   /** Mercato & matchs */
-  TRANSFER_OFFER_CHANCE_PER_CLIENT: 0.45,
+  TRANSFER_SUMMER_START: 1,
+  TRANSFER_SUMMER_END: 4,
+  TRANSFER_WINTER_START: 25,
+  TRANSFER_WINTER_END: 33,
+  TRANSFER_COOLDOWN_WEEKS: 20,
+  WEEKS_PER_SEASON: 52,
   OFFER_EXPIRY_WEEKS: 2,
-  MATCH_INVITE_CHANCE_PER_CLIENT: 0.55,
   PLAYING_TIME_EVOLUTION_MULTIPLIER: 2.5,
   MIN_MINUTES_FOR_EVOLUTION: 45,
   REPUTATION_NEGOTIATION_PENALTY_PER_POINT: 2.2,
   MATCH_DURATION_MS: 30_000,
 } as const;
 
-export const SAVE_GAME_VERSION = 6;
-export const SAVE_GAME_KEY = '@footmanage/save-v6';
+export const SAVE_GAME_VERSION = 7;
+export const SAVE_GAME_KEY = '@footmanage/save-v7';
 
 /** Anciennes clés — supprimées à la migration. */
 export const LEGACY_SAVE_KEYS = [
@@ -61,4 +65,5 @@ export const LEGACY_SAVE_KEYS = [
   '@footmanage/save-v3',
   '@footmanage/save-v4',
   '@footmanage/save-v5',
+  '@footmanage/save-v6',
 ] as const;

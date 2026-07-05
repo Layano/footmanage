@@ -12,6 +12,7 @@ import {
 
 import { SigningNegotiationPanel } from '@/components/negotiation/SigningNegotiationPanel';
 import { PlayerAttributesPanel } from '@/components/players/PlayerAttributesPanel';
+import { PLAYING_TIME_ROLE_LABELS } from '@/constants/playingTime';
 import { theme } from '@/constants/theme';
 import { isNeighborhoodAmateur } from '@/engine/players/amateurGenerator';
 import { estimatePotential, overallToDisplay } from '@/engine/players/potentialEstimate';
@@ -75,6 +76,24 @@ export default function PlayerDetailScreen() {
             <View style={styles.infoCell}>
               <Text style={styles.infoLabel}>Équipe</Text>
               <Text style={styles.infoValue}>{teamLabel}</Text>
+            </View>
+            <View style={styles.infoCell}>
+              <Text style={styles.infoLabel}>Salaire</Text>
+              <Text style={styles.infoValue}>
+                {player.contract.weeklyWage > 0
+                  ? `${player.contract.weeklyWage.toLocaleString('fr-FR')} €/sem.`
+                  : 'Sans club (amateur)'}
+              </Text>
+            </View>
+            <View style={styles.infoCell}>
+              <Text style={styles.infoLabel}>Temps de jeu</Text>
+              <Text style={styles.infoValue}>
+                {player.playingTimeRole
+                  ? PLAYING_TIME_ROLE_LABELS[player.playingTimeRole]
+                  : player.contract.clubId
+                    ? '—'
+                    : '—'}
+              </Text>
             </View>
             <View style={styles.infoCell}>
               <Text style={styles.infoLabel}>Note actuelle</Text>

@@ -1,3 +1,7 @@
+import {
+  PLAYING_TIME_ROLE_MINUTES,
+  type PlayingTimeRole,
+} from '@/constants/playingTime';
 import type { Club } from '@/types/club';
 import type { MatchEvent, MatchFixture, MatchResult, PlayerMatchStat } from '@/types/match';
 import type { Player } from '@/types/player';
@@ -24,18 +28,31 @@ function pickOpponent(clubId: string, leagueId: string, clubs: Club[]): Club | n
   return sameLeague[randomInt(0, sameLeague.length - 1)]!;
 }
 
-function assignMinutes(squad: Player[], clientId?: string): Map<string, number> {
+function assignMinutes(
+  squad: Player[],
+  clientId?: string,
+  clientRole?: PlayingTimeRole,
+): Map<string, number> {
   const minutes = new Map<string, number>();
   const sorted = [...squad].sort((a, b) => b.overallRating - a.overallRating);
   const starters = sorted.slice(0, 11);
   const subs = sorted.slice(11, 16);
 
   for (const p of starters) {
-    const base = randomInt(60, 90);
-    minutes.set(p.id, clientId === p.id ? Math.max(base, 70) : base);
+    if (clientId === p.id && clientRole) {
+      const target = PLAYING_TIME_ROLE_MINUTES[clientRole];
+      minutes.set(p.id, randomInt(Math.max(45, target - 8), Math.min(90, target + 5)));
+    } else {
+      minutes.set(p.id, randomInt(60, 90));
+    }
   }
   for (const p of subs) {
-    minutes.set(p.id, randomInt(5, 35));
+    if (clientId === p.id && clientRole) {
+      const target = PLAYING_TIME_ROLE_MINUTES[clientRole];
+      minutes.set(p.id, randomInt(Math.max(10, target - 15), Math.min(60, target + 10)));
+    } else {
+      minutes.set(p.id, randomInt(5, 35));
+    }
   }
   return minutes;
 }
@@ -70,6 +87,7 @@ export function simulateMatch(
   homeSquad: Player[],
   awaySquad: Player[],
   clientPlayerId?: string,
+  clientPlayingTimeRole?: PlayingTimeRole,
 ): MatchResult {
   const homeStr = teamStrength(homeSquad);
   const awayStr = teamStrength(awaySquad);
@@ -88,8 +106,16 @@ export function simulateMatch(
     },
   ];
 
-  const homeMinutes = assignMinutes(homeSquad, clientPlayerId);
-  const awayMinutes = assignMinutes(awaySquad, clientPlayerId);
+  const homeMinutes = assignMinutes(
+    homeSquad,
+    clientPlayerId,
+    homeSquad.some((p) => p.id === clientPlayerId) ? clientPlayingTimeRole : undefined,
+  );
+  const awayMinutes = assignMinutes(
+    awaySquad,
+    clientPlayerId,
+    awaySquad.some((p) => p.id === clientPlayerId) ? clientPlayingTimeRole : undefined,
+  );
   const homeGoals = new Map<string, number>();
   const awayGoals = new Map<string, number>();
 

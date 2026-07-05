@@ -181,6 +181,7 @@ export default function ScoutingScreen() {
         visible={negotiatingPlayer !== null}
         player={negotiatingPlayer}
         agencyBudget={agencyBudget}
+        agencyReputation={agencyReputation}
         onClose={() => setNegotiatingPlayer(null)}
         onSign={async (offer) => {
           if (!negotiatingPlayer) return { success: false };

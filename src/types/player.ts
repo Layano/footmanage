@@ -69,6 +69,12 @@ interface PlayerBase {
   seasonMinutes: number;
   /** Minutes jouées la semaine passée. */
   weeklyMinutes: number;
+  /** Rôle de temps de jeu promis par le club actuel. */
+  playingTimeRole?: import('@/constants/playingTime').PlayingTimeRole;
+  /** Dernière fenêtre mercato avec offre reçue (ex: "2025-summer"). */
+  lastOfferWindowKey?: string;
+  lastTransferredWeek?: number;
+  lastTransferredSeason?: number;
 }
 
 export interface OutfieldPlayer extends PlayerBase {

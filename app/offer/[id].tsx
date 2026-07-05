@@ -1,8 +1,10 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { ClubOfferNegotiationPanel } from '@/components/negotiation/ClubOfferNegotiationPanel';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
+import { PLAYING_TIME_ROLE_LABELS } from '@/constants/playingTime';
 import { theme } from '@/constants/theme';
 import {
   findPlayerById,
@@ -17,8 +19,15 @@ export default function OfferDetailScreen() {
   const router = useRouter();
   const acceptOffer = useGameStore((s) => s.acceptTransferOffer);
   const rejectOffer = useGameStore((s) => s.rejectTransferOffer);
+  const pendingOffers = useGameStore((s) => s.pendingOffers);
 
-  const offer = useMemo(() => (id ? getOfferById(id) : undefined), [id]);
+  const [showNegotiation, setShowNegotiation] = useState(false);
+
+  const offer = useMemo(() => {
+    if (!id) return undefined;
+    return getOfferById(id) ?? pendingOffers.find((o) => o.id === id);
+  }, [id, pendingOffers]);
+
   const playerInfo = offer ? findPlayerById(offer.playerId) : null;
   const club = offer ? getClubFromStore(offer.clubId) : undefined;
 
@@ -32,21 +41,13 @@ export default function OfferDetailScreen() {
 
   const player = playerInfo.player;
   const isPending = offer.status === 'pending';
+  const roleLabel = PLAYING_TIME_ROLE_LABELS[offer.playingTimeRole];
   const bonusLabel =
     offer.bonusType === 'goal'
       ? `${offer.performanceBonus.toLocaleString('fr-FR')} € par but`
       : offer.bonusType === 'clean_sheet'
         ? `${offer.performanceBonus.toLocaleString('fr-FR')} € par clean sheet`
         : `${offer.performanceBonus.toLocaleString('fr-FR')} € par match`;
-
-  const handleAccept = async () => {
-    const ok = await acceptOffer(offer.id);
-    if (ok) {
-      Alert.alert('Offre acceptée', `${player.displayName} rejoint ${club.name}.`, [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
-    }
-  };
 
   const handleReject = async () => {
     await rejectOffer(offer.id);
@@ -72,7 +73,7 @@ export default function OfferDetailScreen() {
           </Text>
           <Text style={styles.row}>
             <Text style={styles.label}>Temps de jeu · </Text>
-            {offer.expectedMinutesPercent}% des minutes
+            {roleLabel}
           </Text>
           <Text style={styles.row}>
             <Text style={styles.label}>Salaire · </Text>
@@ -93,7 +94,7 @@ export default function OfferDetailScreen() {
             {offer.contractYears} an{offer.contractYears > 1 ? 's' : ''}
           </Text>
           <Text style={styles.expiry}>
-            Expire semaine {offer.expiresWeek} (saison {offer.season})
+            Valable jusqu'à la semaine {offer.expiresWeek} (saison {offer.season})
           </Text>
         </View>
 
@@ -104,12 +105,29 @@ export default function OfferDetailScreen() {
             <Pressable style={styles.rejectBtn} onPress={() => void handleReject()}>
               <Text style={styles.rejectText}>Refuser</Text>
             </Pressable>
-            <Pressable style={styles.acceptBtn} onPress={() => void handleAccept()}>
-              <Text style={styles.acceptText}>Accepter pour le joueur</Text>
+            <Pressable style={styles.negotiateBtn} onPress={() => setShowNegotiation(true)}>
+              <Text style={styles.negotiateText}>Négocier l'offre</Text>
             </Pressable>
           </View>
         )}
       </ScreenContainer>
+
+      <ClubOfferNegotiationPanel
+        visible={showNegotiation}
+        offer={offer}
+        club={club}
+        player={player}
+        onClose={() => setShowNegotiation(false)}
+        onSubmit={async (terms) => {
+          const result = await acceptOffer(offer.id, terms);
+          if (result.success) {
+            Alert.alert('Accord conclu', `${player.displayName} rejoint ${club.name}.`, [
+              { text: 'OK', onPress: () => router.back() },
+            ]);
+          }
+          return result;
+        }}
+      />
     </>
   );
 }
@@ -168,14 +186,14 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     fontWeight: '600',
   },
-  acceptBtn: {
+  negotiateBtn: {
     flex: 2,
     padding: theme.spacing.md,
     borderRadius: 10,
     backgroundColor: theme.colors.primary,
     alignItems: 'center',
   },
-  acceptText: {
+  negotiateText: {
     color: theme.colors.text,
     fontWeight: '700',
   },

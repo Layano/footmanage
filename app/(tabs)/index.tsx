@@ -157,7 +157,9 @@ export default function InboxScreen() {
 
       {mercatoLabel ? (
         <View style={styles.mercatoBanner}>
-          <Text style={styles.mercatoText}>📅 {mercatoLabel} — offres de transfert/prêt possibles</Text>
+          <Text style={styles.mercatoText}>
+            📅 {mercatoLabel} — max. 1 offre/joueur par période
+          </Text>
         </View>
       ) : null}
 
