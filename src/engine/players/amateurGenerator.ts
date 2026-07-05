@@ -79,8 +79,6 @@ export function generateNeighborhoodAmateurs(
     const age = randomInt(15, 17);
     const attributes = buildAmateurAttributes(age);
     const overallRating = calculateOverallRating(position, attributes);
-    // Blessure rare contractée pendant le tournoi de quartier.
-    const isInjured = Math.random() < GAME_CONFIG.NEIGHBORHOOD_INJURY_CHANCE;
 
     const isGem = index === gemIndex;
     const gemPotentialDisplay = randomInt(
@@ -119,7 +117,7 @@ export function generateNeighborhoodAmateurs(
         startDate: `${season}-01-01`,
         endDate: `${season}-12-31`,
       },
-      status: isInjured ? 'injured' : 'free_agent',
+      status: 'free_agent',
       isClient: false,
       morale: randomInt(70, 90),
       form: randomInt(60, 75),

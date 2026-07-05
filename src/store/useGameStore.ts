@@ -44,6 +44,12 @@ import {
 import { migrateLegacyWage } from '@/engine/simulation/salaryEngine';
 import { evaluateClubNegotiation } from '@/engine/negotiation/clubOfferNegotiation';
 import { PLAYING_TIME_ROLE_LABELS } from '@/constants/playingTime';
+import {
+  getNextOfficeLevel,
+  getOfficeLevelConfig,
+  STAFF_CATALOG,
+  type StaffTemplate,
+} from '@/constants/officeConfig';
 import type { NegotiableClubOfferTerms } from '@/types/transfer';
 import {
   agePlayerByOneYear,
@@ -121,6 +127,9 @@ interface GameStore extends PersistedGameState {
   resetGame: () => Promise<void>;
   revealPlayerScouting: (playerId: string) => void;
   unlockCountry: (countryCode: string) => Promise<{ success: boolean; reason?: string }>;
+  upgradeOffice: () => Promise<{ success: boolean; reason?: string }>;
+  hireStaff: (template: StaffTemplate) => Promise<{ success: boolean; reason?: string }>;
+  fireStaff: (staffId: string) => Promise<void>;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -152,7 +161,7 @@ function createStarterAgency(name: string, countryName: string, city: string): A
     },
     staff: [],
     clientPlayerIds: [],
-    maxClients: 10,
+    maxClients: getOfficeLevelConfig(1).maxClients,
     office: {
       city,
       country: countryName,
@@ -336,7 +345,16 @@ function toPersistedState(state: GameStore): PersistedGameState {
 }
 
 function evolveAllPlayers(players: Player[]): Player[] {
-  return players.map((player) => tryWeeklyPlayerEvolution(player));
+  return players.map((player) =>
+    player.status === 'injured' ? player : tryWeeklyPlayerEvolution(player),
+  );
+}
+
+function shouldRetire(player: Player): boolean {
+  if (player.age < GAME_CONFIG.RETIREMENT_START_AGE) return false;
+  const yearsOver = player.age - GAME_CONFIG.RETIREMENT_START_AGE;
+  const chance = Math.min(1, 0.15 + yearsOver * 0.22);
+  return Math.random() < chance;
 }
 
 function ageAllPlayers(players: Player[]): Player[] {
@@ -408,7 +426,11 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
     ...defaults,
     ...saved,
     saveVersion: SAVE_GAME_VERSION,
-    agency: { ...defaults.agency, ...saved.agency },
+    agency: {
+      ...defaults.agency,
+      ...saved.agency,
+      maxClients: getOfficeLevelConfig(saved.agency?.office.level ?? 1).maxClients,
+    },
     isTutorialActive: saved.isTutorialActive ?? false,
     tutorialStep: saved.tutorialStep ?? 0,
     gameMode: saved.gameMode ?? 'career',
@@ -730,6 +752,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return { success: false, reason: 'Ce joueur est blessé — attendez sa guérison.' };
     }
 
+    if (state.myPlayers.length >= state.agency.maxClients) {
+      return {
+        success: false,
+        reason: `Capacité atteinte (${state.agency.maxClients} clients). Agrandissez vos locaux dans l'onglet Finances.`,
+      };
+    }
+
     const evaluation = evaluateNegotiation(player, offer, state.agency.reputation);
     if (!evaluation.accepted) {
       return { success: false, reason: evaluation.feedback };
@@ -809,6 +838,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     if (!player || player.isClient) {
       return { success: false, reason: 'Joueur indisponible.' };
+    }
+
+    if (state.myPlayers.length >= state.agency.maxClients) {
+      return {
+        success: false,
+        reason: `Capacité atteinte (${state.agency.maxClients} clients). Agrandissez vos locaux dans l'onglet Finances.`,
+      };
     }
 
     const evaluation = evaluateNegotiation(player, offer, state.agency.reputation);
@@ -1111,6 +1147,106 @@ export const useGameStore = create<GameStore>((set, get) => ({
     return { success: true };
   },
 
+  upgradeOffice: async () => {
+    const state = get();
+    const next = getNextOfficeLevel(state.agency.office.level);
+    if (!next) {
+      return { success: false, reason: 'Vos locaux sont déjà au niveau maximum.' };
+    }
+    if (state.agencyBudget < next.upgradeCost) {
+      return {
+        success: false,
+        reason: `Budget insuffisant (${next.upgradeCost.toLocaleString('fr-FR')} € requis).`,
+      };
+    }
+
+    const nextAgency: Agency = {
+      ...state.agency,
+      maxClients: next.maxClients,
+      office: { ...state.agency.office, level: next.level },
+      finances: { ...state.agency.finances, operatingCosts: next.monthlyCost },
+    };
+
+    const newMessage: GameMessage = {
+      id: `msg-office-${next.level}-${Date.now()}`,
+      type: 'finance',
+      title: `Nouveaux locaux — ${next.name}`,
+      body: `Capacité portée à ${next.maxClients} clients et ${next.maxStaff} membres du staff. Frais : ${next.monthlyCost.toLocaleString('fr-FR')} €/mois.`,
+      week: state.currentWeek,
+      season: state.currentSeason,
+      createdAt: new Date().toISOString(),
+      read: false,
+      action: 'none',
+    };
+
+    const nextState: PersistedGameState = {
+      ...state,
+      agency: nextAgency,
+      agencyBudget: state.agencyBudget - next.upgradeCost,
+      totalExpenses: state.totalExpenses + next.upgradeCost,
+      messages: [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES),
+    };
+
+    set({ ...nextState, agency: syncAgency(nextState, nextAgency) });
+    await get().saveGame();
+    return { success: true };
+  },
+
+  hireStaff: async (template: StaffTemplate) => {
+    const state = get();
+    const officeConfig = getOfficeLevelConfig(state.agency.office.level);
+
+    if (state.staff.length >= officeConfig.maxStaff) {
+      return {
+        success: false,
+        reason: `Locaux trop petits (${officeConfig.maxStaff} membres max). Agrandissez d'abord.`,
+      };
+    }
+    if (state.agencyBudget < template.hiringFee) {
+      return {
+        success: false,
+        reason: `Budget insuffisant (prime d'embauche : ${template.hiringFee.toLocaleString('fr-FR')} €).`,
+      };
+    }
+
+    const FIRST = ['Julien', 'Marc', 'Sofia', 'Nadia', 'Karim', 'Léa', 'Paulo', 'Ingrid'];
+    const LAST = ['Bernard', 'Rossi', 'Keita', 'Novak', 'Silva', 'Dupont', 'Haddad', 'Larsen'];
+    const firstName = FIRST[Math.floor(Math.random() * FIRST.length)]!;
+    const lastName = LAST[Math.floor(Math.random() * LAST.length)]!;
+
+    const newStaff: Staff = {
+      id: `staff-${template.role}-${Date.now()}`,
+      firstName,
+      lastName,
+      role: template.role,
+      level: template.level,
+      weeklySalary: template.weeklySalary,
+      bonuses: template.bonuses,
+      hiredAt: new Date().toISOString(),
+    };
+
+    const nextState: PersistedGameState = {
+      ...state,
+      staff: [...state.staff, newStaff],
+      agencyBudget: state.agencyBudget - template.hiringFee,
+      totalExpenses: state.totalExpenses + template.hiringFee,
+    };
+
+    set({ ...nextState, agency: syncAgency(nextState) });
+    await get().saveGame();
+    return { success: true };
+  },
+
+  fireStaff: async (staffId: string) => {
+    const state = get();
+    const nextState: PersistedGameState = {
+      ...state,
+      staff: state.staff.filter((s) => s.id !== staffId),
+    };
+    set({ ...nextState, agency: syncAgency(nextState) });
+    await get().saveGame();
+  },
+
   advanceTime: async () => {
     const state = get();
     let nextWeek = state.currentWeek + 1;
@@ -1127,12 +1263,52 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     const newMessages: GameMessage[] = [];
 
-    let myPlayers = evolveAllPlayers(state.myPlayers);
-    let scoutedPlayers = evolveAllPlayers(state.scoutedPlayers).map((p) =>
-      p.status === 'injured' && Math.random() < GAME_CONFIG.INJURY_RECOVERY_CHANCE
-        ? { ...p, status: 'free_agent' as const }
-        : p,
-    );
+    // Blessures clients : rares, bloquent matchs et progression.
+    let myPlayers = state.myPlayers.map((p) => {
+      if (p.status === 'injured') {
+        const remaining = (p.injuryWeeksRemaining ?? 1) - 1;
+        if (remaining <= 0) {
+          newMessages.push({
+            id: `msg-heal-${p.id}-${Date.now()}`,
+            type: 'info',
+            title: 'Retour de blessure',
+            body: `${p.displayName} est rétabli et peut rejouer.`,
+            week: nextWeek,
+            season: nextSeason,
+            createdAt: new Date().toISOString(),
+            read: false,
+            action: 'none',
+            playerId: p.id,
+          });
+          return { ...p, status: 'active' as const, injuryWeeksRemaining: undefined };
+        }
+        return { ...p, injuryWeeksRemaining: remaining };
+      }
+
+      if (Math.random() < GAME_CONFIG.CLIENT_INJURY_CHANCE) {
+        const weeks = Math.floor(
+          Math.random() * (GAME_CONFIG.INJURY_MAX_WEEKS - GAME_CONFIG.INJURY_MIN_WEEKS + 1),
+        ) + GAME_CONFIG.INJURY_MIN_WEEKS;
+        newMessages.push({
+          id: `msg-injury-${p.id}-${Date.now()}`,
+          type: 'info',
+          title: '🤕 Blessure',
+          body: `${p.displayName} s'est blessé — indisponible ${weeks} semaine${weeks > 1 ? 's' : ''} (ni match, ni progression).`,
+          week: nextWeek,
+          season: nextSeason,
+          createdAt: new Date().toISOString(),
+          read: false,
+          action: 'none',
+          playerId: p.id,
+        });
+        return { ...p, status: 'injured' as const, injuryWeeksRemaining: weeks };
+      }
+
+      return p;
+    });
+
+    myPlayers = evolveAllPlayers(myPlayers);
+    let scoutedPlayers = evolveAllPlayers(state.scoutedPlayers);
     let worldPlayers = evolveAllPlayers(state.worldPlayers);
 
     const staleMatches = resolveStaleMatchFixtures(
@@ -1236,7 +1412,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (nextWeekIsCupWeek) {
       // Semaine de coupe : seuls les clients dont le club joue la coupe ont un match.
       for (const client of myPlayers) {
-        if (!client.contract.clubId) continue;
+        if (!client.contract.clubId || client.status === 'injured') continue;
         const cupMatch = getCupFixtureForClub(
           cupFixtures,
           client.contract.clubId,
@@ -1277,7 +1453,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
     } else if (isLeagueMatchWeek(nextWeek)) {
       for (const client of myPlayers) {
-        if (!client.contract.clubId) continue;
+        if (!client.contract.clubId || client.status === 'injured') continue;
         const fixture = createMatchInvite(client, state.clubs, worldPlayers, nextWeek, nextSeason);
         if (!fixture || matchFixturesForWeek.some((m) => m.id === fixture.id)) continue;
         const home = state.clubs.find((c) => c.id === fixture.homeClubId);
@@ -1296,6 +1472,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
       worldPlayers = ageAllPlayers(worldPlayers);
       nextWeek = 1;
       nextSeason += 1;
+
+      // Retraites : les joueurs âgés raccrochent les crampons.
+      const retiredClients = myPlayers.filter(shouldRetire);
+      if (retiredClients.length > 0) {
+        const retiredIds = new Set(retiredClients.map((p) => p.id));
+        myPlayers = myPlayers.filter((p) => !retiredIds.has(p.id));
+        for (const retiree of retiredClients) {
+          newMessages.push({
+            id: `msg-retire-${retiree.id}`,
+            type: 'info',
+            title: 'Fin de carrière',
+            body: `${retiree.displayName} (${retiree.age} ans) prend sa retraite. Merci pour les souvenirs !`,
+            week: nextWeek,
+            season: nextSeason,
+            createdAt: new Date().toISOString(),
+            read: false,
+            action: 'none',
+          });
+        }
+      }
+      scoutedPlayers = scoutedPlayers.filter((p) => !shouldRetire(p));
+      worldPlayers = worldPlayers.filter((p) => !shouldRetire(p));
 
       const academy = runAcademyIntake(
         state.clubs,

@@ -29,10 +29,12 @@ export const GAME_CONFIG = {
   /** Stats actuelles min/max des amateurs (échelle 1–20). */
   AMATEUR_STAT_MIN: 2,
   AMATEUR_STAT_MAX: 6,
-  /** Chance qu'un amateur de tournoi soit blessé (0–1). */
-  NEIGHBORHOOD_INJURY_CHANCE: 0.06,
-  /** Chance hebdomadaire de guérison d'un amateur blessé (0–1). */
-  INJURY_RECOVERY_CHANCE: 0.35,
+  /** Chance hebdomadaire qu'un client se blesse (0–1). */
+  CLIENT_INJURY_CHANCE: 0.015,
+  INJURY_MIN_WEEKS: 2,
+  INJURY_MAX_WEEKS: 8,
+  /** Âge à partir duquel la retraite devient possible. */
+  RETIREMENT_START_AGE: 34,
   /** Potentiel intéressant min/max pour la pépite du tournoi (échelle affichée 1–20). */
   AMATEUR_GEM_POTENTIAL_MIN: 8,
   AMATEUR_GEM_POTENTIAL_MAX: 15,

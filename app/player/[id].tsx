@@ -88,10 +88,10 @@ export default function PlayerDetailScreen() {
             <View style={styles.infoCell}>
               <Text style={styles.infoLabel}>Temps de jeu</Text>
               <Text style={styles.infoValue}>
-                {player.playingTimeRole
-                  ? PLAYING_TIME_ROLE_LABELS[player.playingTimeRole]
-                  : player.contract.clubId
-                    ? '—'
+                {player.status === 'injured'
+                  ? `🤕 Blessé${player.injuryWeeksRemaining ? ` (${player.injuryWeeksRemaining} sem.)` : ''}`
+                  : player.playingTimeRole
+                    ? PLAYING_TIME_ROLE_LABELS[player.playingTimeRole]
                     : '—'}
               </Text>
             </View>

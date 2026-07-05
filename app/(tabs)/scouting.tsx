@@ -221,8 +221,7 @@ export default function ScoutingScreen() {
           contentContainerStyle={styles.listContent}
           renderItem={({ item }) => {
             const club = getClubFromStore(item.contract.clubId);
-            const signable = isNeighborhoodAmateur(item) && item.status !== 'injured';
-            const isInjured = item.status === 'injured';
+            const signable = isNeighborhoodAmateur(item);
             const highlightSign = isTutorialActive && tutorialStep === 3 && signable;
             const potential = estimatePotential(item, staff);
             const teamLabel = getPlayerTeamLabel(item, club);
@@ -238,9 +237,6 @@ export default function ScoutingScreen() {
                     {PLAYER_POSITION_LABELS[item.position]} · {item.age} ans · {item.nationality}
                   </Text>
                   <Text style={styles.team}>🏟️ {teamLabel}</Text>
-                  {isInjured ? (
-                    <Text style={styles.injured}>🤕 Blessé — revenez dans quelques semaines</Text>
-                  ) : null}
                   {item.scoutedFromCity ? (
                     <Text style={styles.scoutedCity}>📍 Repéré à {item.scoutedFromCity}</Text>
                   ) : null}

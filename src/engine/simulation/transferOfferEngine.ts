@@ -34,11 +34,20 @@ function pickClubForPlayer(
   if (countryClubs.length === 0) return null;
 
   const display = overallToDisplay(client.overallRating);
+  const potentialDisplay = overallToDisplay(client.potentialRating);
   const juniorLeagueIds = new Set(
     leagues.filter((l) => l.tier === 'junior').map((l) => l.id),
   );
   const juniorClubs = countryClubs.filter((c) => juniorLeagueIds.has(c.leagueId));
   const proClubs = countryClubs.filter((c) => !juniorLeagueIds.has(c.leagueId));
+
+  // Avant 18 ans, seuls les vrais talents passent pro.
+  if (client.age < 18) {
+    const isTrueTalent = display >= 10 || potentialDisplay >= 14;
+    if (!isTrueTalent && juniorClubs.length > 0) {
+      return juniorClubs[randomInt(0, juniorClubs.length - 1)]!;
+    }
+  }
 
   if (display <= 6 && client.age <= 19 && juniorClubs.length > 0) {
     return juniorClubs[randomInt(0, juniorClubs.length - 1)]!;

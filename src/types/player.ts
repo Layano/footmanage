@@ -78,6 +78,8 @@ interface PlayerBase {
   lastOfferWindowKey?: string;
   lastTransferredWeek?: number;
   lastTransferredSeason?: number;
+  /** Semaines de blessure restantes (clients uniquement). */
+  injuryWeeksRemaining?: number;
 }
 
 export interface OutfieldPlayer extends PlayerBase {
