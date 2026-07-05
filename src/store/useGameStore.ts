@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
-import { GAME_CONFIG, SAVE_GAME_KEY } from '@/constants/gameConfig';
+import { GAME_CONFIG, SAVE_GAME_KEY, SAVE_GAME_VERSION } from '@/constants/gameConfig';
 import { AGENCY_ID, MOCK_CLUBS, MOCK_GAME_DATA, MOCK_LEAGUES } from '@/data/mockData';
 import { generateNeighborhoodAmateurs } from '@/engine/players/amateurGenerator';
 import { processWeeklyEconomy } from '@/engine/simulation/economyEngine';
@@ -21,6 +21,7 @@ import type { Staff } from '@/types/staff';
 // ─── Types persistés ──────────────────────────────────────────────────────────
 
 export interface PersistedGameState {
+  saveVersion: number;
   currentWeek: number;
   currentSeason: number;
   agencyBudget: number;
@@ -46,6 +47,7 @@ interface GameStore extends PersistedGameState {
   scoutNeighborhoodTournament: () => Promise<boolean>;
   signAmateurPlayer: (playerId: string) => Promise<boolean>;
   setTutorialStep: (step: number) => void;
+  resetGame: () => Promise<void>;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -81,6 +83,7 @@ function getInitialState(): PersistedGameState {
   const agency = createStarterAgency();
 
   return {
+    saveVersion: SAVE_GAME_VERSION,
     currentWeek: 1,
     currentSeason: 2025,
     agencyBudget: GAME_CONFIG.STARTING_BUDGET,
@@ -111,6 +114,7 @@ function getInitialState(): PersistedGameState {
 
 function toPersistedState(state: GameStore): PersistedGameState {
   return {
+    saveVersion: SAVE_GAME_VERSION,
     currentWeek: state.currentWeek,
     currentSeason: state.currentSeason,
     agencyBudget: state.agencyBudget,
@@ -150,16 +154,23 @@ function syncAgency(state: PersistedGameState, overrides?: Partial<Agency>): Age
   };
 }
 
-function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGameState {
+function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGameState | null {
+  if (!saved.saveVersion || saved.saveVersion < SAVE_GAME_VERSION) {
+    return null;
+  }
+
   const defaults = getInitialState();
   return {
     ...defaults,
     ...saved,
+    saveVersion: SAVE_GAME_VERSION,
     agency: { ...defaults.agency, ...saved.agency },
     isTutorialActive: saved.isTutorialActive ?? false,
     tutorialStep: saved.tutorialStep ?? 0,
   };
 }
+
+import { clearAllSaves } from '@/store/saveMigration';
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
@@ -168,9 +179,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
   isHydrated: false,
 
   initNewGame: async () => {
+    await clearAllSaves();
     const freshState = getInitialState();
     set({ ...freshState, isHydrated: true });
     await get().saveGame();
+  },
+
+  resetGame: async () => {
+    await get().initNewGame();
   },
 
   saveGame: async () => {
@@ -188,9 +204,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
 
       const saved = normalizeLoadedState(JSON.parse(raw) as Partial<PersistedGameState>);
+      if (!saved) {
+        await clearAllSaves();
+        set({ isHydrated: true });
+        return false;
+      }
+
       set({ ...saved, isHydrated: true });
       return true;
     } catch {
+      await clearAllSaves();
       set({ isHydrated: true });
       return false;
     }

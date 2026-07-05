@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 
+import { clearLegacySaves } from '@/store/saveMigration';
 import { useGameStore } from '@/store/useGameStore';
 
 /** Charge une sauvegarde existante ou démarre une nouvelle partie au lancement. */
@@ -12,6 +13,7 @@ export function GameInitializer() {
     if (isHydrated) return;
 
     (async () => {
+      await clearLegacySaves();
       const loaded = await loadGame();
       if (!loaded) {
         await initNewGame();

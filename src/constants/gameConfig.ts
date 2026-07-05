@@ -28,4 +28,8 @@ export const GAME_CONFIG = {
   AMATEUR_GEM_POTENTIAL_MAX: 15,
 } as const;
 
-export const SAVE_GAME_KEY = '@footmanage/save-v2';
+export const SAVE_GAME_VERSION = 3;
+export const SAVE_GAME_KEY = '@footmanage/save-v3';
+
+/** Anciennes clés — supprimées à la migration. */
+export const LEGACY_SAVE_KEYS = ['@footmanage/save-v1', '@footmanage/save-v2'] as const;

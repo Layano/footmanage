@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { theme } from '@/constants/theme';
@@ -13,11 +13,28 @@ export default function DashboardScreen() {
   const agency = useGameStore((s) => s.agency);
   const myPlayers = useGameStore((s) => s.myPlayers);
   const messages = useGameStore((s) => s.messages);
+  const isTutorialActive = useGameStore((s) => s.isTutorialActive);
   const advanceTime = useGameStore((s) => s.advanceTime);
+  const resetGame = useGameStore((s) => s.resetGame);
 
   const handleAdvanceTime = useCallback(() => {
     void advanceTime();
   }, [advanceTime]);
+
+  const handleResetGame = useCallback(() => {
+    Alert.alert(
+      'Nouvelle partie',
+      'Recommencer depuis le début ? Votre progression actuelle sera effacée.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Recommencer',
+          style: 'destructive',
+          onPress: () => void resetGame(),
+        },
+      ],
+    );
+  }, [resetGame]);
 
   if (!isHydrated) {
     return (
@@ -63,6 +80,16 @@ export default function DashboardScreen() {
 
       <Pressable style={styles.button} onPress={handleAdvanceTime}>
         <Text style={styles.buttonText}>⏩ Avancer le temps (+1 semaine)</Text>
+      </Pressable>
+
+      {isTutorialActive ? (
+        <Text style={styles.tutorialHint}>
+          Tutoriel en cours — suivez les instructions dans l'onglet Scouting.
+        </Text>
+      ) : null}
+
+      <Pressable style={styles.resetButton} onPress={handleResetGame}>
+        <Text style={styles.resetButtonText}>🔄 Nouvelle partie</Text>
       </Pressable>
     </ScreenContainer>
   );
@@ -128,5 +155,20 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     fontSize: 16,
     fontWeight: '600',
+  },
+  tutorialHint: {
+    marginTop: theme.spacing.sm,
+    fontSize: 13,
+    color: theme.colors.warning,
+    textAlign: 'center',
+  },
+  resetButton: {
+    marginTop: theme.spacing.sm,
+    padding: theme.spacing.sm,
+    alignItems: 'center',
+  },
+  resetButtonText: {
+    fontSize: 14,
+    color: theme.colors.textMuted,
   },
 });
