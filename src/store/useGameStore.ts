@@ -3,7 +3,12 @@ import { create } from 'zustand';
 
 import { GAME_CONFIG, SAVE_GAME_KEY, SAVE_GAME_VERSION } from '@/constants/gameConfig';
 import { getCountryByCode } from '@/data/world/countries';
+import {
+  buildRepresentationContract,
+  evaluateNegotiation,
+} from '@/engine/negotiation/amateurNegotiation';
 import { generateNeighborhoodAmateurs } from '@/engine/players/amateurGenerator';
+import { buildTournamentForWeek } from '@/engine/scouting/tournamentEngine';
 import { buildWorldDatabase } from '@/engine/world/worldGenerator';
 import { processWeeklyEconomy } from '@/engine/simulation/economyEngine';
 import { generateWeeklyEvent } from '@/engine/simulation/eventGenerator';
@@ -12,6 +17,7 @@ import {
   tryWeeklyPlayerEvolution,
 } from '@/engine/simulation/evolutionEngine';
 import { clearAllSaves } from '@/store/saveMigration';
+import type { NegotiationOffer, SignPlayerResult } from '@/types/agentContract';
 import type { Agency } from '@/types/agency';
 import type { Club } from '@/types/club';
 import type { GameMessage } from '@/types/game';
@@ -19,6 +25,7 @@ import { WEEKS_PER_SEASON } from '@/types/game';
 import type { League } from '@/types/league';
 import type { Player } from '@/types/player';
 import type { Staff } from '@/types/staff';
+import type { NeighborhoodTournament } from '@/types/tournament';
 import type { GameMode, NewGameConfig } from '@/types/world';
 
 // ─── Types persistés ──────────────────────────────────────────────────────────
@@ -43,6 +50,7 @@ export interface PersistedGameState {
   gameMode: GameMode;
   agencyCountryCode: string;
   hasActiveGame: boolean;
+  currentTournament: NeighborhoodTournament | null;
 }
 
 interface GameStore extends PersistedGameState {
@@ -52,7 +60,7 @@ interface GameStore extends PersistedGameState {
   saveGame: () => Promise<void>;
   advanceTime: () => Promise<void>;
   scoutNeighborhoodTournament: () => Promise<boolean>;
-  signAmateurPlayer: (playerId: string) => Promise<boolean>;
+  signAmateurPlayer: (playerId: string, offer: NegotiationOffer) => Promise<SignPlayerResult>;
   setTutorialStep: (step: number) => void;
   resetGame: () => Promise<void>;
   revealPlayerScouting: (playerId: string) => void;
@@ -60,8 +68,16 @@ interface GameStore extends PersistedGameState {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
+function createInitialTournament(
+  week: number,
+  season: number,
+  countryCode: string,
+  agencyCity: string,
+  tutorialLocal = false,
+): NeighborhoodTournament {
+  return buildTournamentForWeek(week, season, countryCode, agencyCity, {
+    forceCity: tutorialLocal ? agencyCity : undefined,
+  });
 }
 
 function createStarterAgency(name: string, countryName: string, city: string): Agency {
@@ -109,6 +125,7 @@ function getEmptyShellState(): PersistedGameState {
     gameMode: 'career',
     agencyCountryCode: 'FRA',
     hasActiveGame: false,
+    currentTournament: null,
   };
 }
 
@@ -147,6 +164,13 @@ function buildFreshGameState(config: NewGameConfig): PersistedGameState {
     gameMode: config.gameMode,
     agencyCountryCode: config.countryCode,
     hasActiveGame: true,
+    currentTournament: createInitialTournament(
+      1,
+      2025,
+      config.countryCode,
+      country.defaultCity,
+      true,
+    ),
   };
 }
 
@@ -171,6 +195,7 @@ function toPersistedState(state: GameStore): PersistedGameState {
     gameMode: state.gameMode,
     agencyCountryCode: state.agencyCountryCode,
     hasActiveGame: state.hasActiveGame,
+    currentTournament: state.currentTournament,
   };
 }
 
@@ -213,6 +238,14 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
     gameMode: saved.gameMode ?? 'career',
     agencyCountryCode: saved.agencyCountryCode ?? 'FRA',
     hasActiveGame: saved.hasActiveGame ?? true,
+    currentTournament:
+      saved.currentTournament ??
+      createInitialTournament(
+        saved.currentWeek ?? 1,
+        saved.currentSeason ?? 2025,
+        saved.agencyCountryCode ?? 'FRA',
+        saved.agency?.office.city ?? 'Paris',
+      ),
   };
 }
 
@@ -283,24 +316,48 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   scoutNeighborhoodTournament: async () => {
     const state = get();
-    const cost = GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_COST;
+    const tournament =
+      state.currentTournament ??
+      createInitialTournament(
+        state.currentWeek,
+        state.currentSeason,
+        state.agencyCountryCode,
+        state.agency.office.city,
+      );
 
-    if (state.agencyBudget < cost) {
+    if (state.agencyBudget < tournament.travelCost) {
       return false;
     }
 
-    const newAmateurs = generateNeighborhoodAmateurs(state.currentWeek, state.currentSeason);
-    const nextWeek = state.currentWeek + 1;
-    const nextBudget = state.agencyBudget - cost;
-    const nextExpenses = state.totalExpenses + cost;
+    const newAmateurs = generateNeighborhoodAmateurs(state.currentWeek, state.currentSeason, {
+      countryCode: state.agencyCountryCode,
+      tournamentCity: tournament.city,
+    });
 
+    let nextWeek = state.currentWeek + 1;
+    let nextSeason = state.currentSeason;
+    if (nextWeek > WEEKS_PER_SEASON) {
+      nextWeek = 1;
+      nextSeason += 1;
+    }
+
+    const nextBudget = state.agencyBudget - tournament.travelCost;
+    const nextExpenses = state.totalExpenses + tournament.travelCost;
+    const nextTournament = createInitialTournament(
+      nextWeek,
+      nextSeason,
+      state.agencyCountryCode,
+      state.agency.office.city,
+    );
+
+    const countryName = getCountryByCode(state.agencyCountryCode)?.name ?? state.agencyCountryCode;
     const newMessage: GameMessage = {
       id: `msg-tournament-${Date.now()}`,
       type: 'scout',
-      title: 'Tournoi de quartier',
-      body: `${newAmateurs.length} jeunes talents repérés dans les tournois locaux.`,
+      title: `Tournoi — ${tournament.city}`,
+      body: `${newAmateurs.length} jeunes ${countryName} repérés à ${tournament.city} (trajet : ${tournament.travelCost} €).`,
       week: nextWeek,
-      season: state.currentSeason,
+      season: nextSeason,
       createdAt: new Date().toISOString(),
       read: false,
     };
@@ -308,9 +365,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const nextState: PersistedGameState = {
       ...state,
       currentWeek: nextWeek,
+      currentSeason: nextSeason,
       agencyBudget: nextBudget,
       totalExpenses: nextExpenses,
       scoutedPlayers: [...newAmateurs, ...state.scoutedPlayers],
+      currentTournament: nextTournament,
       messages: [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES),
       tutorialStep: state.isTutorialActive && state.tutorialStep === 2 ? 3 : state.tutorialStep,
     };
@@ -324,30 +383,40 @@ export const useGameStore = create<GameStore>((set, get) => ({
     return true;
   },
 
-  signAmateurPlayer: async (playerId: string) => {
+  signAmateurPlayer: async (playerId: string, offer: NegotiationOffer): Promise<SignPlayerResult> => {
     const state = get();
     const player = state.scoutedPlayers.find((p) => p.id === playerId);
 
     if (!player || player.contract.clubId !== null) {
-      return false;
+      return { success: false, reason: 'Ce joueur ne peut pas être signé.' };
     }
 
+    const evaluation = evaluateNegotiation(player, offer);
+    if (!evaluation.accepted) {
+      return { success: false, reason: evaluation.feedback };
+    }
+
+    const representationContract = buildRepresentationContract(offer, state.currentSeason);
     const signedPlayer: Player = {
       ...player,
       isClient: true,
       agentId: GAME_CONFIG.AGENCY_ID,
       status: 'active',
+      representationContract,
     };
 
     const myPlayers = [...state.myPlayers, signedPlayer];
     const scoutedPlayers = state.scoutedPlayers.filter((p) => p.id !== playerId);
     const isFirstClient = state.myPlayers.length === 0;
+    const bonusIncome = offer.signingBonus;
+    const nextBudget = state.agencyBudget + bonusIncome;
+    const nextRevenue = state.totalRevenue + bonusIncome;
 
     const newMessage: GameMessage = {
       id: `msg-sign-${playerId}-${Date.now()}`,
       type: 'info',
-      title: 'Premier client !',
-      body: `Vous représentez désormais ${signedPlayer.displayName}.`,
+      title: isFirstClient ? 'Premier client !' : 'Joueur signé',
+      body: `${signedPlayer.displayName} rejoint votre agence (${offer.salaryCommissionPercent}% salaire, ${offer.transferCommissionPercent}% transfert${bonusIncome > 0 ? `, prime ${bonusIncome} €` : ''}).`,
       week: state.currentWeek,
       season: state.currentSeason,
       createdAt: new Date().toISOString(),
@@ -358,9 +427,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...state,
       myPlayers,
       scoutedPlayers,
-      messages: isFirstClient
-        ? [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES)
-        : state.messages,
+      agencyBudget: nextBudget,
+      totalRevenue: nextRevenue,
+      messages: [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES),
       isTutorialActive: isFirstClient ? false : state.isTutorialActive,
       tutorialStep: isFirstClient ? 0 : state.tutorialStep,
     };
@@ -371,7 +440,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
 
     await get().saveGame();
-    return true;
+    return { success: true };
   },
 
   revealPlayerScouting: (playerId: string) => {
@@ -400,7 +469,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let nextWeek = state.currentWeek + 1;
     let nextSeason = state.currentSeason;
 
-    const economy = processWeeklyEconomy(state.staff, state.agency.finances.operatingCosts);
+    const economy = processWeeklyEconomy(
+      state.staff,
+      state.agency.finances.operatingCosts,
+      state.myPlayers,
+    );
     let nextBudget = state.agencyBudget + economy.netChange;
     let nextRevenue = state.totalRevenue + economy.commissionIncome;
     let nextExpenses = state.totalExpenses + economy.totalExpense;
@@ -464,6 +537,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
       messages,
       totalRevenue: nextRevenue,
       totalExpenses: nextExpenses,
+      currentTournament: createInitialTournament(
+        nextWeek,
+        nextSeason,
+        state.agencyCountryCode,
+        state.agency.office.city,
+      ),
     };
 
     set({

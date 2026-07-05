@@ -36,6 +36,8 @@ export {
 } from './player';
 
 export type { League, CountryCode } from './league';
+export type { AgentRepresentationContract, NegotiationOffer, SignPlayerResult } from './agentContract';
+export type { NeighborhoodTournament } from './tournament';
 export type {
   FootballCountry,
   GameMode,
