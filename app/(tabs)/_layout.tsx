@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Home, Users, Globe, Wallet } from 'lucide-react-native';
+import { Users, Globe, Wallet, Mail } from 'lucide-react-native';
 
 import { TutorialOverlay } from '@/components/TutorialOverlay';
 import { theme } from '@/constants/theme';
@@ -34,9 +34,9 @@ export default function TabLayout() {
         <Tabs.Screen
           name="index"
           options={{
-            title: 'Tableau de bord',
+            title: 'Boîte mail',
             href: tabHref('index'),
-            tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
+            tabBarIcon: ({ color, size }) => <Mail color={color} size={size} />,
           }}
         />
         <Tabs.Screen

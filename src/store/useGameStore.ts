@@ -2,22 +2,53 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
 import { GAME_CONFIG, SAVE_GAME_KEY, SAVE_GAME_VERSION } from '@/constants/gameConfig';
-import { AGENCY_ID, MOCK_CLUBS, MOCK_GAME_DATA, MOCK_LEAGUES } from '@/data/mockData';
+import { getCountryByCode } from '@/data/world/countries';
+import {
+  buildRepresentationContract,
+  evaluateNegotiation,
+} from '@/engine/negotiation/amateurNegotiation';
 import { generateNeighborhoodAmateurs } from '@/engine/players/amateurGenerator';
+import { buildTournamentForWeek } from '@/engine/scouting/tournamentEngine';
+import { buildWorldDatabase } from '@/engine/world/worldGenerator';
 import { processWeeklyEconomy } from '@/engine/simulation/economyEngine';
-import { generateWeeklyEvent } from '@/engine/simulation/eventGenerator';
+import {
+  createMatchInvite,
+  createMatchInviteMessage,
+  getClubSquad,
+  simulateMatch,
+} from '@/engine/simulation/matchEngine';
+import {
+  adjustAgencyReputation,
+  reputationDeltaForMatchAttendance,
+  reputationDeltaForSigning,
+  reputationDeltaForTransferDeal,
+} from '@/engine/simulation/reputationEngine';
+import {
+  expireOldOffers,
+  generateWeeklyTransferOffers,
+  normalizeClubOffer,
+} from '@/engine/simulation/transferOfferEngine';
+import { getTransferWindowLabel, isLeagueMatchWeek, normalizeLeagueTransferWindows } from '@/engine/simulation/transferWindow';
+import { evaluateClubNegotiation } from '@/engine/negotiation/clubOfferNegotiation';
+import { PLAYING_TIME_ROLE_LABELS } from '@/constants/playingTime';
+import type { NegotiableClubOfferTerms } from '@/types/transfer';
 import {
   agePlayerByOneYear,
   tryWeeklyPlayerEvolution,
 } from '@/engine/simulation/evolutionEngine';
 import { clearAllSaves } from '@/store/saveMigration';
+import type { NegotiationOffer, SignPlayerResult } from '@/types/agentContract';
 import type { Agency } from '@/types/agency';
 import type { Club } from '@/types/club';
 import type { GameMessage } from '@/types/game';
 import { WEEKS_PER_SEASON } from '@/types/game';
+import type { MatchFixture } from '@/types/match';
 import type { League } from '@/types/league';
 import type { Player } from '@/types/player';
+import type { ClubContractOffer } from '@/types/transfer';
 import type { Staff } from '@/types/staff';
+import type { NeighborhoodTournament } from '@/types/tournament';
+import type { GameMode, NewGameConfig } from '@/types/world';
 
 // ─── Types persistés ──────────────────────────────────────────────────────────
 
@@ -37,16 +68,29 @@ export interface PersistedGameState {
   totalExpenses: number;
   isTutorialActive: boolean;
   tutorialStep: number;
+  worldPlayers: Player[];
+  gameMode: GameMode;
+  agencyCountryCode: string;
+  hasActiveGame: boolean;
+  currentTournament: NeighborhoodTournament | null;
+  pendingOffers: ClubContractOffer[];
+  matchFixtures: MatchFixture[];
 }
 
 interface GameStore extends PersistedGameState {
   isHydrated: boolean;
-  initNewGame: () => Promise<void>;
+  startNewGame: (config: NewGameConfig) => Promise<void>;
   loadGame: () => Promise<boolean>;
   saveGame: () => Promise<void>;
   advanceTime: () => Promise<void>;
   scoutNeighborhoodTournament: () => Promise<boolean>;
-  signAmateurPlayer: (playerId: string) => Promise<boolean>;
+  signAmateurPlayer: (playerId: string, offer: NegotiationOffer) => Promise<SignPlayerResult>;
+  signProPlayer: (playerId: string, offer: NegotiationOffer) => Promise<SignPlayerResult>;
+  markMessageRead: (messageId: string) => void;
+  acceptTransferOffer: (offerId: string, terms: NegotiableClubOfferTerms) => Promise<SignPlayerResult>;
+  rejectTransferOffer: (offerId: string) => Promise<void>;
+  runMatchSimulation: (matchId: string) => MatchFixture | null;
+  completeMatch: (matchId: string) => Promise<void>;
   setTutorialStep: (step: number) => void;
   resetGame: () => Promise<void>;
   revealPlayerScouting: (playerId: string) => void;
@@ -54,63 +98,122 @@ interface GameStore extends PersistedGameState {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
+function createInitialTournament(
+  week: number,
+  season: number,
+  countryCode: string,
+  agencyCity: string,
+  tutorialLocal = false,
+): NeighborhoodTournament {
+  return buildTournamentForWeek(week, season, countryCode, agencyCity, {
+    forceCity: tutorialLocal ? agencyCity : undefined,
+  });
 }
 
-function createStarterAgency(): Agency {
-  const base = clone(MOCK_GAME_DATA.agency);
-
+function createStarterAgency(name: string, countryName: string, city: string): Agency {
   return {
-    ...base,
+    id: GAME_CONFIG.AGENCY_ID,
+    name,
     reputation: 5,
+    foundedYear: 2025,
     finances: {
-      ...base.finances,
       balance: GAME_CONFIG.STARTING_BUDGET,
       totalRevenue: 0,
       totalExpenses: 0,
+      commissionRate: 10,
       operatingCosts: 0,
     },
     staff: [],
     clientPlayerIds: [],
+    maxClients: 10,
     office: {
-      city: 'Banlieue',
-      country: 'France',
+      city,
+      country: countryName,
       level: 1,
     },
   };
 }
 
-function getInitialState(): PersistedGameState {
-  const agency = createStarterAgency();
+function getEmptyShellState(): PersistedGameState {
+  return {
+    saveVersion: SAVE_GAME_VERSION,
+    currentWeek: 1,
+    currentSeason: 2025,
+    agencyBudget: GAME_CONFIG.STARTING_BUDGET,
+    agency: createStarterAgency('Mon Agence', 'France', 'Paris'),
+    myPlayers: [],
+    scoutedPlayers: [],
+    staff: [],
+    leagues: [],
+    clubs: [],
+    worldPlayers: [],
+    messages: [],
+    totalRevenue: 0,
+    totalExpenses: 0,
+    isTutorialActive: false,
+    tutorialStep: 0,
+    gameMode: 'career',
+    agencyCountryCode: 'FRA',
+    hasActiveGame: false,
+    currentTournament: null,
+    pendingOffers: [],
+    matchFixtures: [],
+  };
+}
+
+function withPlayerDefaults(player: Player): Player {
+  return {
+    ...player,
+    seasonMinutes: player.seasonMinutes ?? 0,
+    weeklyMinutes: player.weeklyMinutes ?? 0,
+  };
+}
+
+function buildFreshGameState(config: NewGameConfig): PersistedGameState {
+  const country = getCountryByCode(config.countryCode) ?? getCountryByCode('FRA')!;
+  const world = buildWorldDatabase({ agencyCountryCode: config.countryCode });
 
   return {
     saveVersion: SAVE_GAME_VERSION,
     currentWeek: 1,
     currentSeason: 2025,
     agencyBudget: GAME_CONFIG.STARTING_BUDGET,
-    agency,
+    agency: createStarterAgency(config.agencyName, country.name, country.defaultCity),
     myPlayers: [],
     scoutedPlayers: [],
     staff: [],
-    leagues: clone(MOCK_LEAGUES),
-    clubs: clone(MOCK_CLUBS),
+    leagues: world.leagues,
+    clubs: world.clubs,
+    worldPlayers: world.players,
     messages: [
       {
         id: 'msg-welcome',
         type: 'info',
         title: 'Nouveau départ',
-        body: "Votre agence est vide. Pas d'argent, pas de clients. À vous de construire votre empire.",
+        body: `Bienvenue à ${config.agencyName} ! Votre agence est basée à ${country.defaultCity}.`,
         week: 1,
         season: 2025,
         createdAt: new Date().toISOString(),
         read: false,
+        action: 'none',
       },
     ],
     totalRevenue: 0,
     totalExpenses: 0,
     isTutorialActive: true,
     tutorialStep: 1,
+    gameMode: config.gameMode,
+    agencyCountryCode: config.countryCode,
+    hasActiveGame: true,
+    currentTournament: createInitialTournament(
+      1,
+      2025,
+      config.countryCode,
+      country.defaultCity,
+      true,
+    ),
+    pendingOffers: [],
+    matchFixtures: [],
   };
 }
 
@@ -131,6 +234,13 @@ function toPersistedState(state: GameStore): PersistedGameState {
     totalExpenses: state.totalExpenses,
     isTutorialActive: state.isTutorialActive,
     tutorialStep: state.tutorialStep,
+    worldPlayers: state.worldPlayers,
+    gameMode: state.gameMode,
+    agencyCountryCode: state.agencyCountryCode,
+    hasActiveGame: state.hasActiveGame,
+    currentTournament: state.currentTournament,
+    pendingOffers: state.pendingOffers,
+    matchFixtures: state.matchFixtures,
   };
 }
 
@@ -161,7 +271,7 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
     return null;
   }
 
-  const defaults = getInitialState();
+  const defaults = getEmptyShellState();
   return {
     ...defaults,
     ...saved,
@@ -169,6 +279,26 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
     agency: { ...defaults.agency, ...saved.agency },
     isTutorialActive: saved.isTutorialActive ?? false,
     tutorialStep: saved.tutorialStep ?? 0,
+    gameMode: saved.gameMode ?? 'career',
+    agencyCountryCode: saved.agencyCountryCode ?? 'FRA',
+    hasActiveGame: saved.hasActiveGame ?? true,
+    currentTournament:
+      saved.currentTournament ??
+      createInitialTournament(
+        saved.currentWeek ?? 1,
+        saved.currentSeason ?? 2025,
+        saved.agencyCountryCode ?? 'FRA',
+        saved.agency?.office.city ?? 'Paris',
+      ),
+    pendingOffers: (saved.pendingOffers ?? []).map((o) =>
+      normalizeClubOffer(o as ClubContractOffer & { expectedMinutesPercent?: number }),
+    ),
+    matchFixtures: saved.matchFixtures ?? [],
+    leagues: (saved.leagues ?? defaults.leagues).map(normalizeLeagueTransferWindows),
+    myPlayers: (saved.myPlayers ?? []).map(withPlayerDefaults),
+    scoutedPlayers: (saved.scoutedPlayers ?? []).map(withPlayerDefaults),
+    worldPlayers: (saved.worldPlayers ?? []).map(withPlayerDefaults),
+    messages: (saved.messages ?? []).map((m) => ({ ...m, action: m.action ?? 'none' })),
   };
 }
 
@@ -176,28 +306,64 @@ function updatePlayerInLists(
   state: PersistedGameState,
   playerId: string,
   updater: (player: Player) => Player,
-): Pick<PersistedGameState, 'myPlayers' | 'scoutedPlayers'> {
+): Pick<PersistedGameState, 'myPlayers' | 'scoutedPlayers' | 'worldPlayers'> {
   return {
     myPlayers: state.myPlayers.map((p) => (p.id === playerId ? updater(p) : p)),
     scoutedPlayers: state.scoutedPlayers.map((p) => (p.id === playerId ? updater(p) : p)),
+    worldPlayers: state.worldPlayers.map((p) => (p.id === playerId ? updater(p) : p)),
+  };
+}
+
+function tryGenerateTransferOffers(state: {
+  currentWeek: number;
+  currentSeason: number;
+  myPlayers: Player[];
+  clubs: Club[];
+  leagues: League[];
+  agencyCountryCode: string;
+  pendingOffers: ClubContractOffer[];
+}): {
+  pendingOffers: ClubContractOffer[];
+  myPlayers: Player[];
+  messages: GameMessage[];
+} {
+  if (state.myPlayers.length === 0) {
+    return { pendingOffers: state.pendingOffers, myPlayers: state.myPlayers, messages: [] };
+  }
+
+  const generated = generateWeeklyTransferOffers(
+    state.currentWeek,
+    state.currentSeason,
+    state.myPlayers,
+    state.clubs,
+    state.leagues,
+    state.agencyCountryCode,
+    state.pendingOffers,
+  );
+
+  return {
+    pendingOffers: [...state.pendingOffers, ...generated.offers],
+    myPlayers: generated.updatedClients,
+    messages: generated.messages,
   };
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 export const useGameStore = create<GameStore>((set, get) => ({
-  ...getInitialState(),
+  ...getEmptyShellState(),
   isHydrated: false,
 
-  initNewGame: async () => {
+  startNewGame: async (config: NewGameConfig) => {
     await clearAllSaves();
-    const freshState = getInitialState();
-    set({ ...freshState, isHydrated: true });
+    const freshState = buildFreshGameState(config);
+    set({ ...freshState, isHydrated: true, hasActiveGame: true });
     await get().saveGame();
   },
 
   resetGame: async () => {
-    await get().initNewGame();
+    await clearAllSaves();
+    set({ ...getEmptyShellState(), isHydrated: true, hasActiveGame: false });
   },
 
   saveGame: async () => {
@@ -210,22 +376,37 @@ export const useGameStore = create<GameStore>((set, get) => ({
     try {
       const raw = await AsyncStorage.getItem(SAVE_GAME_KEY);
       if (!raw) {
-        set({ isHydrated: true });
+        set({ isHydrated: true, hasActiveGame: false });
         return false;
       }
 
       const saved = normalizeLoadedState(JSON.parse(raw) as Partial<PersistedGameState>);
       if (!saved) {
         await clearAllSaves();
-        set({ isHydrated: true });
+        set({ isHydrated: true, hasActiveGame: false });
         return false;
       }
 
-      set({ ...saved, isHydrated: true });
+      set({ ...saved, isHydrated: true, hasActiveGame: saved.hasActiveGame ?? true });
+
+      const hydrated = get();
+      const offers = tryGenerateTransferOffers(hydrated);
+      if (offers.messages.length > 0) {
+        set({
+          pendingOffers: offers.pendingOffers,
+          myPlayers: offers.myPlayers,
+          messages: [...offers.messages, ...hydrated.messages].slice(
+            0,
+            GAME_CONFIG.MAX_DASHBOARD_MESSAGES,
+          ),
+        });
+        await get().saveGame();
+      }
+
       return true;
     } catch {
       await clearAllSaves();
-      set({ isHydrated: true });
+      set({ isHydrated: true, hasActiveGame: false });
       return false;
     }
   },
@@ -237,34 +418,61 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   scoutNeighborhoodTournament: async () => {
     const state = get();
-    const cost = GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_COST;
+    const tournament =
+      state.currentTournament ??
+      createInitialTournament(
+        state.currentWeek,
+        state.currentSeason,
+        state.agencyCountryCode,
+        state.agency.office.city,
+      );
 
-    if (state.agencyBudget < cost) {
+    if (state.agencyBudget < tournament.travelCost) {
       return false;
     }
 
-    const newAmateurs = generateNeighborhoodAmateurs(state.currentWeek, state.currentSeason);
-    const nextWeek = state.currentWeek + 1;
-    const nextBudget = state.agencyBudget - cost;
-    const nextExpenses = state.totalExpenses + cost;
+    const newAmateurs = generateNeighborhoodAmateurs(state.currentWeek, state.currentSeason, {
+      countryCode: state.agencyCountryCode,
+      tournamentCity: tournament.city,
+    });
 
+    let nextWeek = state.currentWeek + 1;
+    let nextSeason = state.currentSeason;
+    if (nextWeek > WEEKS_PER_SEASON) {
+      nextWeek = 1;
+      nextSeason += 1;
+    }
+
+    const nextBudget = state.agencyBudget - tournament.travelCost;
+    const nextExpenses = state.totalExpenses + tournament.travelCost;
+    const nextTournament = createInitialTournament(
+      nextWeek,
+      nextSeason,
+      state.agencyCountryCode,
+      state.agency.office.city,
+    );
+
+    const countryName = getCountryByCode(state.agencyCountryCode)?.name ?? state.agencyCountryCode;
     const newMessage: GameMessage = {
       id: `msg-tournament-${Date.now()}`,
       type: 'scout',
-      title: 'Tournoi de quartier',
-      body: `${newAmateurs.length} jeunes talents repérés dans les tournois locaux.`,
+      title: `Tournoi — ${tournament.city}`,
+      body: `${newAmateurs.length} jeunes ${countryName} repérés à ${tournament.city} (trajet : ${tournament.travelCost} €).`,
       week: nextWeek,
-      season: state.currentSeason,
+      season: nextSeason,
       createdAt: new Date().toISOString(),
       read: false,
+      action: 'none',
     };
 
     const nextState: PersistedGameState = {
       ...state,
       currentWeek: nextWeek,
+      currentSeason: nextSeason,
       agencyBudget: nextBudget,
       totalExpenses: nextExpenses,
       scoutedPlayers: [...newAmateurs, ...state.scoutedPlayers],
+      currentTournament: nextTournament,
       messages: [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES),
       tutorialStep: state.isTutorialActive && state.tutorialStep === 2 ? 3 : state.tutorialStep,
     };
@@ -278,54 +486,321 @@ export const useGameStore = create<GameStore>((set, get) => ({
     return true;
   },
 
-  signAmateurPlayer: async (playerId: string) => {
+  signAmateurPlayer: async (playerId: string, offer: NegotiationOffer): Promise<SignPlayerResult> => {
     const state = get();
     const player = state.scoutedPlayers.find((p) => p.id === playerId);
 
     if (!player || player.contract.clubId !== null) {
-      return false;
+      return { success: false, reason: 'Ce joueur ne peut pas être signé.' };
     }
 
-    const signedPlayer: Player = {
+    const evaluation = evaluateNegotiation(player, offer, state.agency.reputation);
+    if (!evaluation.accepted) {
+      return { success: false, reason: evaluation.feedback };
+    }
+
+    const representationContract = buildRepresentationContract(offer, state.currentSeason);
+    const signedPlayer: Player = withPlayerDefaults({
       ...player,
       isClient: true,
-      agentId: AGENCY_ID,
+      agentId: GAME_CONFIG.AGENCY_ID,
       status: 'active',
-    };
+      representationContract,
+      seasonMinutes: 0,
+      weeklyMinutes: 0,
+    });
 
     const myPlayers = [...state.myPlayers, signedPlayer];
     const scoutedPlayers = state.scoutedPlayers.filter((p) => p.id !== playerId);
     const isFirstClient = state.myPlayers.length === 0;
+    const bonusIncome = offer.signingBonus;
+    const nextBudget = state.agencyBudget + bonusIncome;
+    const nextRevenue = state.totalRevenue + bonusIncome;
 
     const newMessage: GameMessage = {
       id: `msg-sign-${playerId}-${Date.now()}`,
       type: 'info',
-      title: 'Premier client !',
-      body: `Vous représentez désormais ${signedPlayer.displayName}.`,
+      title: isFirstClient ? 'Premier client !' : 'Joueur signé',
+      body: `${signedPlayer.displayName} rejoint votre agence (${offer.salaryCommissionPercent}% salaire, ${offer.transferCommissionPercent}% transfert${bonusIncome > 0 ? `, prime ${bonusIncome} €` : ''}).`,
       week: state.currentWeek,
       season: state.currentSeason,
       createdAt: new Date().toISOString(),
       read: false,
+      action: 'none',
     };
+
+    const nextAgency = adjustAgencyReputation(state.agency, reputationDeltaForSigning(signedPlayer));
 
     const nextState: PersistedGameState = {
       ...state,
       myPlayers,
       scoutedPlayers,
-      messages: isFirstClient
-        ? [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES)
-        : state.messages,
+      agencyBudget: nextBudget,
+      totalRevenue: nextRevenue,
+      agency: nextAgency,
+      messages: [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES),
       isTutorialActive: isFirstClient ? false : state.isTutorialActive,
       tutorialStep: isFirstClient ? 0 : state.tutorialStep,
     };
 
-    set({
+    const offers = tryGenerateTransferOffers({
       ...nextState,
-      agency: syncAgency(nextState),
+      pendingOffers: state.pendingOffers,
+    });
+
+    const stateWithOffers: PersistedGameState = {
+      ...nextState,
+      myPlayers: offers.myPlayers,
+      pendingOffers: offers.pendingOffers,
+      messages: [...offers.messages, ...nextState.messages].slice(
+        0,
+        GAME_CONFIG.MAX_DASHBOARD_MESSAGES,
+      ),
+    };
+
+    set({
+      ...stateWithOffers,
+      agency: syncAgency({ ...stateWithOffers, agency: nextAgency }),
     });
 
     await get().saveGame();
-    return true;
+    return { success: true };
+  },
+
+  signProPlayer: async (playerId: string, offer: NegotiationOffer): Promise<SignPlayerResult> => {
+    const state = get();
+    const player = state.worldPlayers.find((p) => p.id === playerId);
+
+    if (!player || player.isClient) {
+      return { success: false, reason: 'Joueur indisponible.' };
+    }
+
+    const evaluation = evaluateNegotiation(player, offer, state.agency.reputation);
+    if (!evaluation.accepted) {
+      return { success: false, reason: evaluation.feedback };
+    }
+
+    const representationContract = buildRepresentationContract(offer, state.currentSeason);
+    const signedPlayer = withPlayerDefaults({
+      ...player,
+      isClient: true,
+      agentId: GAME_CONFIG.AGENCY_ID,
+      representationContract,
+    });
+
+    const myPlayers = [...state.myPlayers, signedPlayer];
+    const worldPlayers = state.worldPlayers.filter((p) => p.id !== playerId);
+    const nextBudget = state.agencyBudget + offer.signingBonus;
+    const nextAgency = adjustAgencyReputation(state.agency, reputationDeltaForSigning(signedPlayer));
+
+    const newMessage: GameMessage = {
+      id: `msg-pro-sign-${playerId}-${Date.now()}`,
+      type: 'info',
+      title: 'Nouveau client professionnel',
+      body: `${signedPlayer.displayName} rejoint votre agence après vos discussions post-match.`,
+      week: state.currentWeek,
+      season: state.currentSeason,
+      createdAt: new Date().toISOString(),
+      read: false,
+      action: 'none',
+    };
+
+    const nextState: PersistedGameState = {
+      ...state,
+      myPlayers,
+      worldPlayers,
+      agencyBudget: nextBudget,
+      totalRevenue: state.totalRevenue + offer.signingBonus,
+      agency: nextAgency,
+      messages: [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES),
+    };
+
+    set({ ...nextState, agency: syncAgency(nextState) });
+    await get().saveGame();
+    return { success: true };
+  },
+
+  markMessageRead: (messageId: string) => {
+    const state = get();
+    const messages = state.messages.map((m) =>
+      m.id === messageId ? { ...m, read: true } : m,
+    );
+    set({ messages });
+    void get().saveGame();
+  },
+
+  acceptTransferOffer: async (
+    offerId: string,
+    terms: NegotiableClubOfferTerms,
+  ): Promise<SignPlayerResult> => {
+    const state = get();
+    const offer = state.pendingOffers.find((o) => o.id === offerId && o.status === 'pending');
+    if (!offer) return { success: false, reason: 'Offre introuvable.' };
+
+    const club = state.clubs.find((c) => c.id === offer.clubId);
+    const playerIndex = state.myPlayers.findIndex((p) => p.id === offer.playerId);
+    if (!club || playerIndex < 0) return { success: false, reason: 'Joueur introuvable.' };
+
+    const player = state.myPlayers[playerIndex]!;
+    const evaluation = evaluateClubNegotiation(offer, terms, club, player);
+    if (!evaluation.accepted) {
+      return { success: false, reason: evaluation.feedback };
+    }
+
+    const commission =
+      offer.type === 'transfer' && player.representationContract
+        ? Math.round((terms.fee * player.representationContract.transferCommissionPercent) / 100)
+        : 0;
+
+    const updatedPlayer: Player = {
+      ...player,
+      contract: {
+        ...player.contract,
+        clubId: offer.clubId,
+        weeklyWage: terms.weeklyWage,
+        endDate: `${state.currentSeason + terms.contractYears}-06-30`,
+      },
+      currentTeam: club.name,
+      playingTimeRole: terms.playingTimeRole,
+      weeklyMinutes: 0,
+      lastTransferredWeek: state.currentWeek,
+      lastTransferredSeason: state.currentSeason,
+    };
+
+    const myPlayers = [...state.myPlayers];
+    myPlayers[playerIndex] = updatedPlayer;
+
+    const pendingOffers = state.pendingOffers.map((o) =>
+      o.id === offerId
+        ? { ...o, status: 'accepted' as const, ...terms }
+        : o.playerId === offer.playerId && o.status === 'pending'
+          ? { ...o, status: 'rejected' as const }
+          : o,
+    );
+
+    const nextAgency = adjustAgencyReputation(
+      state.agency,
+      reputationDeltaForTransferDeal(terms.fee),
+    );
+
+    const roleLabel = PLAYING_TIME_ROLE_LABELS[terms.playingTimeRole];
+    const newMessage: GameMessage = {
+      id: `msg-offer-accepted-${offerId}`,
+      type: offer.type === 'loan' ? 'loan' : 'transfer',
+      title: offer.type === 'loan' ? 'Prêt conclu' : 'Transfert conclu',
+      body: `${player.displayName} rejoint ${club.name} (${roleLabel}, ${terms.weeklyWage.toLocaleString('fr-FR')} €/sem.)${commission > 0 ? ` · Commission : ${commission.toLocaleString('fr-FR')} €` : ''}.`,
+      week: state.currentWeek,
+      season: state.currentSeason,
+      createdAt: new Date().toISOString(),
+      read: true,
+      action: 'none',
+      playerId: player.id,
+    };
+
+    const nextState: PersistedGameState = {
+      ...state,
+      myPlayers,
+      pendingOffers,
+      agencyBudget: state.agencyBudget + commission,
+      totalRevenue: state.totalRevenue + commission,
+      agency: nextAgency,
+      messages: [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES),
+    };
+
+    set({ ...nextState, agency: syncAgency(nextState) });
+    await get().saveGame();
+    return { success: true };
+  },
+
+  rejectTransferOffer: async (offerId: string) => {
+    const state = get();
+    const pendingOffers = state.pendingOffers.map((o) =>
+      o.id === offerId ? { ...o, status: 'rejected' as const } : o,
+    );
+    set({ pendingOffers });
+    await get().saveGame();
+  },
+
+  runMatchSimulation: (matchId: string) => {
+    const state = get();
+    const fixture = state.matchFixtures.find((m) => m.id === matchId);
+    if (!fixture) return null;
+
+    if (fixture.result) return fixture;
+
+    const homeClub = state.clubs.find((c) => c.id === fixture.homeClubId);
+    const awayClub = state.clubs.find((c) => c.id === fixture.awayClubId);
+    if (!homeClub || !awayClub) return null;
+
+    const allPlayers = [...state.worldPlayers, ...state.myPlayers];
+    const homeSquad = getClubSquad(fixture.homeClubId, allPlayers);
+    const awaySquad = getClubSquad(fixture.awayClubId, allPlayers);
+    const client = state.myPlayers.find((p) => p.id === fixture.clientPlayerId);
+    const result = simulateMatch(
+      homeClub,
+      awayClub,
+      homeSquad,
+      awaySquad,
+      fixture.clientPlayerId,
+      client?.playingTimeRole,
+    );
+
+    const matchFixtures = state.matchFixtures.map((m) =>
+      m.id === matchId ? { ...m, result } : m,
+    );
+    set({ matchFixtures });
+    void get().saveGame();
+    return { ...fixture, result };
+  },
+
+  completeMatch: async (matchId: string) => {
+    const state = get();
+    const fixture = state.matchFixtures.find((m) => m.id === matchId);
+    if (!fixture?.result || fixture.status === 'watched') return;
+
+    const allStats = [...fixture.result.homeStats, ...fixture.result.awayStats];
+    const clientStat = allStats.find((s) => s.playerId === fixture.clientPlayerId);
+
+    let myPlayers = state.myPlayers.map((p) => {
+      if (p.id !== fixture.clientPlayerId) return p;
+      const mins = clientStat?.minutes ?? 0;
+      return {
+        ...p,
+        weeklyMinutes: mins,
+        seasonMinutes: p.seasonMinutes + mins,
+        form: Math.min(100, p.form + (clientStat && clientStat.rating >= 7 ? 2 : -1)),
+      };
+    });
+
+    myPlayers = myPlayers.map((p) => tryWeeklyPlayerEvolution(p));
+
+    let worldPlayers = state.worldPlayers.map((p) => {
+      const stat = allStats.find((s) => s.playerId === p.id);
+      if (!stat) return p;
+      return {
+        ...p,
+        weeklyMinutes: stat.minutes,
+        seasonMinutes: p.seasonMinutes + stat.minutes,
+      };
+    });
+
+    const repDelta = clientStat ? reputationDeltaForMatchAttendance(clientStat.rating) : 0;
+    const nextAgency = adjustAgencyReputation(state.agency, repDelta);
+
+    const matchFixtures = state.matchFixtures.map((m) =>
+      m.id === matchId ? { ...m, status: 'watched' as const } : m,
+    );
+
+    const nextState: PersistedGameState = {
+      ...state,
+      myPlayers,
+      worldPlayers,
+      matchFixtures,
+      agency: nextAgency,
+    };
+
+    set({ ...nextState, agency: syncAgency(nextState) });
+    await get().saveGame();
   },
 
   revealPlayerScouting: (playerId: string) => {
@@ -354,32 +829,61 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let nextWeek = state.currentWeek + 1;
     let nextSeason = state.currentSeason;
 
-    const economy = processWeeklyEconomy(state.staff, state.agency.finances.operatingCosts);
+    const economy = processWeeklyEconomy(
+      state.staff,
+      state.agency.finances.operatingCosts,
+      state.myPlayers,
+    );
     let nextBudget = state.agencyBudget + economy.netChange;
     let nextRevenue = state.totalRevenue + economy.commissionIncome;
     let nextExpenses = state.totalExpenses + economy.totalExpense;
 
     const newMessages: GameMessage[] = [];
-    if (economy.commissionIncome > 0) {
-      newMessages.push({
-        id: `msg-commission-${nextWeek}-${Date.now()}`,
-        type: 'finance',
-        title: 'Commission perçue',
-        body: `Vous avez encaissé ${economy.commissionIncome.toLocaleString('fr-FR')} € de commission.`,
-        week: nextWeek,
-        season: nextSeason,
-        createdAt: new Date().toISOString(),
-        read: false,
-      });
-    }
 
     let myPlayers = evolveAllPlayers(state.myPlayers);
     let scoutedPlayers = evolveAllPlayers(state.scoutedPlayers);
+    let worldPlayers = evolveAllPlayers(state.worldPlayers);
+
+    let pendingOffers = state.pendingOffers;
+
+    const transferWindowLabel = getTransferWindowLabel(nextWeek, state.leagues, state.agencyCountryCode);
+    if (transferWindowLabel && myPlayers.length > 0) {
+      const generated = generateWeeklyTransferOffers(
+        nextWeek,
+        nextSeason,
+        myPlayers,
+        state.clubs,
+        state.leagues,
+        state.agencyCountryCode,
+        pendingOffers,
+      );
+      pendingOffers = [...pendingOffers, ...generated.offers];
+      myPlayers = generated.updatedClients;
+      newMessages.push(...generated.messages);
+    }
+
+    const expired = expireOldOffers(pendingOffers, nextWeek);
+    pendingOffers = expired.offers;
+
+    let matchFixtures = [...state.matchFixtures];
+    if (isLeagueMatchWeek(nextWeek)) {
+      for (const client of myPlayers) {
+        if (!client.contract.clubId) continue;
+        const fixture = createMatchInvite(client, state.clubs, worldPlayers, nextWeek, nextSeason);
+        if (!fixture || matchFixtures.some((m) => m.id === fixture.id)) continue;
+        const home = state.clubs.find((c) => c.id === fixture.homeClubId);
+        const away = state.clubs.find((c) => c.id === fixture.awayClubId);
+        if (!home || !away) continue;
+        matchFixtures.push(fixture);
+        newMessages.push(createMatchInviteMessage(fixture, home, away, client));
+      }
+    }
 
     const isSeasonEnd = nextWeek > WEEKS_PER_SEASON;
     if (isSeasonEnd) {
       myPlayers = ageAllPlayers(myPlayers);
       scoutedPlayers = ageAllPlayers(scoutedPlayers);
+      worldPlayers = ageAllPlayers(worldPlayers);
       nextWeek = 1;
       nextSeason += 1;
 
@@ -392,12 +896,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         season: nextSeason,
         createdAt: new Date().toISOString(),
         read: false,
+        action: 'none',
       });
-    }
-
-    const weeklyEvent = generateWeeklyEvent(nextWeek, nextSeason, myPlayers, state.clubs);
-    if (weeklyEvent) {
-      newMessages.push(weeklyEvent);
     }
 
     const messages = [...newMessages, ...state.messages].slice(
@@ -412,9 +912,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
       agencyBudget: nextBudget,
       myPlayers,
       scoutedPlayers,
+      worldPlayers,
       messages,
+      pendingOffers,
+      matchFixtures,
       totalRevenue: nextRevenue,
       totalExpenses: nextExpenses,
+      currentTournament: createInitialTournament(
+        nextWeek,
+        nextSeason,
+        state.agencyCountryCode,
+        state.agency.office.city,
+      ),
     };
 
     set({
@@ -447,7 +956,7 @@ export function isTabLockedDuringTutorial(
   return false;
 }
 
-export type PlayerSource = 'client' | 'scouted';
+export type PlayerSource = 'client' | 'scouted' | 'world';
 
 export function findPlayerById(playerId: string): { player: Player; source: PlayerSource } | null {
   const state = useGameStore.getState();
@@ -455,5 +964,36 @@ export function findPlayerById(playerId: string): { player: Player; source: Play
   if (client) return { player: client, source: 'client' };
   const scouted = state.scoutedPlayers.find((p) => p.id === playerId);
   if (scouted) return { player: scouted, source: 'scouted' };
+  const world = state.worldPlayers.find((p) => p.id === playerId);
+  if (world) return { player: world, source: 'world' };
   return null;
+}
+
+/** Joueurs du marché mondial (hors clients et hors tournois locaux). */
+export function getWorldMarketPlayers(agencyCountryCode?: string): Player[] {
+  const state = useGameStore.getState();
+  const code = agencyCountryCode ?? state.agencyCountryCode;
+  const clientIds = new Set(state.myPlayers.map((p) => p.id));
+  const scoutedIds = new Set(state.scoutedPlayers.map((p) => p.id));
+
+  return state.worldPlayers.filter(
+    (p) =>
+      !p.isClient &&
+      !clientIds.has(p.id) &&
+      !scoutedIds.has(p.id) &&
+      p.contract.clubId !== null &&
+      state.clubs.find((c) => c.id === p.contract.clubId)?.countryCode === code,
+  );
+}
+
+export function getUnreadMessageCount(): number {
+  return useGameStore.getState().messages.filter((m) => !m.read).length;
+}
+
+export function getOfferById(offerId: string) {
+  return useGameStore.getState().pendingOffers.find((o) => o.id === offerId);
+}
+
+export function getMatchFixtureById(matchId: string) {
+  return useGameStore.getState().matchFixtures.find((m) => m.id === matchId);
 }

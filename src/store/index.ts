@@ -4,6 +4,7 @@ export {
   formatGameDate,
   isTabLockedDuringTutorial,
   findPlayerById,
+  getWorldMarketPlayers,
   type PersistedGameState,
   type PlayerSource,
 } from './useGameStore';

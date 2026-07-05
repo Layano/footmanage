@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -10,14 +10,16 @@ import {
   View,
 } from 'react-native';
 
+import { SigningNegotiationPanel } from '@/components/negotiation/SigningNegotiationPanel';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
-import { GAME_CONFIG } from '@/constants/gameConfig';
 import { theme } from '@/constants/theme';
+import { getCountryByCode } from '@/data/world/countries';
 import { isNeighborhoodAmateur } from '@/engine/players/amateurGenerator';
 import { estimatePotential, overallToDisplay } from '@/engine/players/potentialEstimate';
-import { getClubFromStore, useGameStore } from '@/store/useGameStore';
+import { getClubFromStore, getWorldMarketPlayers, useGameStore } from '@/store/useGameStore';
 import { getPlayerTeamLabel } from '@/utils/playerDisplay';
 import { PLAYER_POSITION_LABELS } from '@/types';
+import type { Player } from '@/types/player';
 
 export default function ScoutingScreen() {
   const router = useRouter();
@@ -31,6 +33,24 @@ export default function ScoutingScreen() {
   const scoutNeighborhoodTournament = useGameStore((s) => s.scoutNeighborhoodTournament);
   const signAmateurPlayer = useGameStore((s) => s.signAmateurPlayer);
   const setTutorialStep = useGameStore((s) => s.setTutorialStep);
+  const agencyCountryCode = useGameStore((s) => s.agencyCountryCode);
+  const agencyReputation = useGameStore((s) => s.agency.reputation);
+  const currentTournament = useGameStore((s) => s.currentTournament);
+  const agencyCity = useGameStore((s) => s.agency.office.city);
+
+  const [view, setView] = useState<'local' | 'market'>('local');
+  const [negotiatingPlayer, setNegotiatingPlayer] = useState<Player | null>(null);
+
+  const countryName = getCountryByCode(agencyCountryCode)?.name ?? agencyCountryCode;
+  const travelCost = currentTournament?.travelCost ?? 0;
+  const tournamentCity = currentTournament?.city ?? '—';
+
+  const marketPlayers = useMemo(
+    () => getWorldMarketPlayers(agencyCountryCode).slice(0, 40),
+    [agencyCountryCode, scoutedPlayers.length],
+  );
+
+  const displayPlayers = view === 'local' ? scoutedPlayers : marketPlayers;
 
   useEffect(() => {
     if (isTutorialActive && tutorialStep === 1) {
@@ -43,15 +63,8 @@ export default function ScoutingScreen() {
     if (!success) {
       Alert.alert(
         'Fonds insuffisants',
-        `Il vous faut au moins ${GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_COST} € pour vous déplacer.`,
+        `Il vous faut au moins ${travelCost} € pour vous rendre à ${tournamentCity}.`,
       );
-    }
-  };
-
-  const handleSign = async (playerId: string, playerName: string) => {
-    const success = await signAmateurPlayer(playerId);
-    if (success) {
-      Alert.alert('Joueur signé !', `${playerName} rejoint votre agence.`);
     }
   };
 
@@ -63,8 +76,9 @@ export default function ScoutingScreen() {
     );
   }
 
-  const canAffordTournament = agencyBudget >= GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_COST;
+  const canAffordTournament = agencyBudget >= travelCost;
   const highlightTournament = isTutorialActive && tutorialStep === 2;
+  const isLocalTrip = tournamentCity === agencyCity;
 
   return (
     <ScreenContainer
@@ -78,22 +92,41 @@ export default function ScoutingScreen() {
         ]}
         onPress={() => void handleTournament()}
         disabled={!canAffordTournament}>
-        <Text style={styles.tournamentTitle}>🏘️ Aller aux tournois de quartier</Text>
+        <Text style={styles.tournamentTitle}>🏘️ Tournoi de quartier — {tournamentCity}</Text>
         <Text style={styles.tournamentDetails}>
-          Coût : {GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_COST} € + 1 semaine · 3 jeunes repérés
+          {isLocalTrip ? 'Tournoi local' : `Déplacement depuis ${agencyCity}`} · Trajet : {travelCost} €
+          {' · '}+1 semaine · 3 jeunes {countryName}
         </Text>
       </Pressable>
 
-      {scoutedPlayers.length === 0 ? (
+      <View style={styles.tabRow}>
+        <Pressable
+          style={[styles.tab, view === 'local' && styles.tabActive]}
+          onPress={() => setView('local')}>
+          <Text style={[styles.tabText, view === 'local' && styles.tabTextActive]}>
+            Prospects locaux
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.tab, view === 'market' && styles.tabActive]}
+          onPress={() => setView('market')}>
+          <Text style={[styles.tabText, view === 'market' && styles.tabTextActive]}>
+            Marché national
+          </Text>
+        </Pressable>
+      </View>
+
+      {displayPlayers.length === 0 ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyText}>
-            Aucun joueur repéré. Participez à un tournoi de quartier pour découvrir des talents
-            locaux.
+            {view === 'local'
+              ? `Aucun prospect local. Rendez-vous au tournoi de ${tournamentCity}.`
+              : 'Aucun joueur disponible sur le marché national pour le moment.'}
           </Text>
         </View>
       ) : (
         <FlatList
-          data={scoutedPlayers}
+          data={displayPlayers}
           keyExtractor={(item) => item.id}
           style={styles.list}
           contentContainerStyle={styles.listContent}
@@ -115,6 +148,9 @@ export default function ScoutingScreen() {
                     {PLAYER_POSITION_LABELS[item.position]} · {item.age} ans · {item.nationality}
                   </Text>
                   <Text style={styles.team}>🏟️ {teamLabel}</Text>
+                  {item.scoutedFromCity ? (
+                    <Text style={styles.scoutedCity}>📍 Repéré à {item.scoutedFromCity}</Text>
+                  ) : null}
                   <Text style={styles.potential}>
                     {potential.stars} {potential.label}
                   </Text>
@@ -131,8 +167,8 @@ export default function ScoutingScreen() {
                 {signable ? (
                   <Pressable
                     style={[styles.signButton, highlightSign && styles.signButtonHighlight]}
-                    onPress={() => void handleSign(item.id, item.displayName)}>
-                    <Text style={styles.signButtonText}>✍️ Signer (gratuit)</Text>
+                    onPress={() => setNegotiatingPlayer(item)}>
+                    <Text style={styles.signButtonText}>✍️ Négocier le contrat</Text>
                   </Pressable>
                 ) : null}
               </View>
@@ -140,6 +176,23 @@ export default function ScoutingScreen() {
           }}
         />
       )}
+
+      <SigningNegotiationPanel
+        visible={negotiatingPlayer !== null}
+        player={negotiatingPlayer}
+        agencyBudget={agencyBudget}
+        agencyReputation={agencyReputation}
+        onClose={() => setNegotiatingPlayer(null)}
+        onSign={async (offer) => {
+          if (!negotiatingPlayer) return { success: false };
+          const result = await signAmateurPlayer(negotiatingPlayer.id, offer);
+          if (result.success) {
+            Alert.alert('Joueur signé !', `${negotiatingPlayer.displayName} rejoint votre agence.`);
+            setNegotiatingPlayer(null);
+          }
+          return result;
+        }}
+      />
     </ScreenContainer>
   );
 }
@@ -176,6 +229,33 @@ const styles = StyleSheet.create({
   tournamentDetails: {
     fontSize: 13,
     color: theme.colors.textMuted,
+    lineHeight: 18,
+  },
+  tabRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: 'center',
+    backgroundColor: theme.colors.surface,
+  },
+  tabActive: {
+    borderColor: theme.colors.primary,
+    backgroundColor: theme.colors.surfaceLight,
+  },
+  tabText: {
+    fontSize: 13,
+    color: theme.colors.textMuted,
+  },
+  tabTextActive: {
+    color: theme.colors.primary,
+    fontWeight: '600',
   },
   emptyState: {
     flex: 1,
@@ -231,6 +311,11 @@ const styles = StyleSheet.create({
   team: {
     fontSize: 14,
     color: theme.colors.text,
+    marginBottom: theme.spacing.xs,
+  },
+  scoutedCity: {
+    fontSize: 13,
+    color: theme.colors.primary,
     marginBottom: theme.spacing.xs,
   },
   potential: {
