@@ -29,6 +29,11 @@ import {
   normalizeClubOffer,
 } from '@/engine/simulation/transferOfferEngine';
 import { getTransferWindowLabel, isLeagueMatchWeek, normalizeLeagueTransferWindows } from '@/engine/simulation/transferWindow';
+import {
+  initializeCompetitions,
+  simulateCompetitionWeek,
+} from '@/engine/simulation/competitionEngine';
+import { migrateLegacyWage } from '@/engine/simulation/salaryEngine';
 import { evaluateClubNegotiation } from '@/engine/negotiation/clubOfferNegotiation';
 import { PLAYING_TIME_ROLE_LABELS } from '@/constants/playingTime';
 import type { NegotiableClubOfferTerms } from '@/types/transfer';
@@ -46,6 +51,13 @@ import type { MatchFixture } from '@/types/match';
 import type { League } from '@/types/league';
 import type { Player } from '@/types/player';
 import type { ClubContractOffer } from '@/types/transfer';
+import type {
+  Competition,
+  CompetitionResult,
+  CupFixture,
+  LeagueStanding,
+  Trophy,
+} from '@/types/competition';
 import type { Staff } from '@/types/staff';
 import type { NeighborhoodTournament } from '@/types/tournament';
 import type { GameMode, NewGameConfig } from '@/types/world';
@@ -75,6 +87,11 @@ export interface PersistedGameState {
   currentTournament: NeighborhoodTournament | null;
   pendingOffers: ClubContractOffer[];
   matchFixtures: MatchFixture[];
+  competitions: Competition[];
+  standings: LeagueStanding[];
+  competitionResults: CompetitionResult[];
+  cupFixtures: CupFixture[];
+  trophies: Trophy[];
 }
 
 interface GameStore extends PersistedGameState {
@@ -158,20 +175,44 @@ function getEmptyShellState(): PersistedGameState {
     currentTournament: null,
     pendingOffers: [],
     matchFixtures: [],
+    competitions: [],
+    standings: [],
+    competitionResults: [],
+    cupFixtures: [],
+    trophies: [],
   };
 }
 
-function withPlayerDefaults(player: Player): Player {
+function withPlayerDefaults(player: Player, clubs: Club[], leagues: League[]): Player {
+  const club = clubs.find((c) => c.id === player.contract.clubId);
+  const league = club ? leagues.find((l) => l.id === club.leagueId) : undefined;
+  const legacyWeekly = player.contract.weeklyWage;
+  const monthlyWage =
+    player.contract.monthlyWage ??
+    (legacyWeekly != null
+      ? migrateLegacyWage(legacyWeekly, player, club, league)
+      : 0);
+
   return {
     ...player,
     seasonMinutes: player.seasonMinutes ?? 0,
     weeklyMinutes: player.weeklyMinutes ?? 0,
+    contract: {
+      ...player.contract,
+      monthlyWage,
+    },
   };
 }
 
 function buildFreshGameState(config: NewGameConfig): PersistedGameState {
   const country = getCountryByCode(config.countryCode) ?? getCountryByCode('FRA')!;
   const world = buildWorldDatabase({ agencyCountryCode: config.countryCode });
+  const compInit = initializeCompetitions(
+    2025,
+    world.leagues,
+    world.clubs,
+    config.countryCode,
+  );
 
   return {
     saveVersion: SAVE_GAME_VERSION,
@@ -214,6 +255,11 @@ function buildFreshGameState(config: NewGameConfig): PersistedGameState {
     ),
     pendingOffers: [],
     matchFixtures: [],
+    competitions: compInit.competitions,
+    standings: compInit.standings,
+    competitionResults: [],
+    cupFixtures: compInit.cupFixtures,
+    trophies: [],
   };
 }
 
@@ -241,6 +287,11 @@ function toPersistedState(state: GameStore): PersistedGameState {
     currentTournament: state.currentTournament,
     pendingOffers: state.pendingOffers,
     matchFixtures: state.matchFixtures,
+    competitions: state.competitions,
+    standings: state.standings,
+    competitionResults: state.competitionResults,
+    cupFixtures: state.cupFixtures,
+    trophies: state.trophies,
   };
 }
 
@@ -267,11 +318,29 @@ function syncAgency(state: PersistedGameState, overrides?: Partial<Agency>): Age
 }
 
 function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGameState | null {
-  if (!saved.saveVersion || saved.saveVersion < SAVE_GAME_VERSION) {
+  if (!saved.saveVersion || saved.saveVersion < 7) {
     return null;
   }
 
   const defaults = getEmptyShellState();
+  const leagues = (saved.leagues ?? defaults.leagues).map(normalizeLeagueTransferWindows);
+  const clubs = saved.clubs ?? defaults.clubs;
+  const agencyCountryCode = saved.agencyCountryCode ?? 'FRA';
+  const currentSeason = saved.currentSeason ?? 2025;
+
+  let competitions = saved.competitions ?? [];
+  let standings = saved.standings ?? [];
+  let cupFixtures = saved.cupFixtures ?? [];
+
+  if (competitions.length === 0 && leagues.length > 0 && clubs.length > 0) {
+    const compInit = initializeCompetitions(currentSeason, leagues, clubs, agencyCountryCode);
+    competitions = compInit.competitions;
+    standings = compInit.standings;
+    cupFixtures = compInit.cupFixtures;
+  }
+
+  const mapPlayer = (p: Player) => withPlayerDefaults(p, clubs, leagues);
+
   return {
     ...defaults,
     ...saved,
@@ -280,24 +349,29 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
     isTutorialActive: saved.isTutorialActive ?? false,
     tutorialStep: saved.tutorialStep ?? 0,
     gameMode: saved.gameMode ?? 'career',
-    agencyCountryCode: saved.agencyCountryCode ?? 'FRA',
+    agencyCountryCode,
     hasActiveGame: saved.hasActiveGame ?? true,
     currentTournament:
       saved.currentTournament ??
       createInitialTournament(
         saved.currentWeek ?? 1,
-        saved.currentSeason ?? 2025,
-        saved.agencyCountryCode ?? 'FRA',
+        currentSeason,
+        agencyCountryCode,
         saved.agency?.office.city ?? 'Paris',
       ),
     pendingOffers: (saved.pendingOffers ?? []).map((o) =>
       normalizeClubOffer(o as ClubContractOffer & { expectedMinutesPercent?: number }),
     ),
     matchFixtures: saved.matchFixtures ?? [],
-    leagues: (saved.leagues ?? defaults.leagues).map(normalizeLeagueTransferWindows),
-    myPlayers: (saved.myPlayers ?? []).map(withPlayerDefaults),
-    scoutedPlayers: (saved.scoutedPlayers ?? []).map(withPlayerDefaults),
-    worldPlayers: (saved.worldPlayers ?? []).map(withPlayerDefaults),
+    leagues,
+    competitions,
+    standings,
+    competitionResults: saved.competitionResults ?? [],
+    cupFixtures,
+    trophies: saved.trophies ?? [],
+    myPlayers: (saved.myPlayers ?? []).map(mapPlayer),
+    scoutedPlayers: (saved.scoutedPlayers ?? []).map(mapPlayer),
+    worldPlayers: (saved.worldPlayers ?? []).map(mapPlayer),
     messages: (saved.messages ?? []).map((m) => ({ ...m, action: m.action ?? 'none' })),
   };
 }
@@ -374,7 +448,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   loadGame: async () => {
     try {
-      const raw = await AsyncStorage.getItem(SAVE_GAME_KEY);
+      let raw = await AsyncStorage.getItem(SAVE_GAME_KEY);
+      if (!raw) {
+        raw = await AsyncStorage.getItem('@footmanage/save-v7');
+      }
       if (!raw) {
         set({ isHydrated: true, hasActiveGame: false });
         return false;
@@ -508,7 +585,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       representationContract,
       seasonMinutes: 0,
       weeklyMinutes: 0,
-    });
+    }, state.clubs, state.leagues);
 
     const myPlayers = [...state.myPlayers, signedPlayer];
     const scoutedPlayers = state.scoutedPlayers.filter((p) => p.id !== playerId);
@@ -586,7 +663,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       isClient: true,
       agentId: GAME_CONFIG.AGENCY_ID,
       representationContract,
-    });
+    }, state.clubs, state.leagues);
 
     const myPlayers = [...state.myPlayers, signedPlayer];
     const worldPlayers = state.worldPlayers.filter((p) => p.id !== playerId);
@@ -657,7 +734,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       contract: {
         ...player.contract,
         clubId: offer.clubId,
-        weeklyWage: terms.weeklyWage,
+        monthlyWage: terms.monthlyWage,
         endDate: `${state.currentSeason + terms.contractYears}-06-30`,
       },
       currentTeam: club.name,
@@ -688,7 +765,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       id: `msg-offer-accepted-${offerId}`,
       type: offer.type === 'loan' ? 'loan' : 'transfer',
       title: offer.type === 'loan' ? 'Prêt conclu' : 'Transfert conclu',
-      body: `${player.displayName} rejoint ${club.name} (${roleLabel}, ${terms.weeklyWage.toLocaleString('fr-FR')} €/sem.)${commission > 0 ? ` · Commission : ${commission.toLocaleString('fr-FR')} €` : ''}.`,
+      body: `${player.displayName} rejoint ${club.name} (${roleLabel}, ${terms.monthlyWage.toLocaleString('fr-FR')} €/mois)${commission > 0 ? ` · Commission : ${commission.toLocaleString('fr-FR')} €` : ''}.`,
       week: state.currentWeek,
       season: state.currentSeason,
       createdAt: new Date().toISOString(),
@@ -865,6 +942,42 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const expired = expireOldOffers(pendingOffers, nextWeek);
     pendingOffers = expired.offers;
 
+    let competitions = state.competitions;
+    let standings = state.standings;
+    let competitionResults = [...state.competitionResults];
+    let cupFixtures = state.cupFixtures;
+    let trophies = state.trophies;
+
+    if (isLeagueMatchWeek(nextWeek) && competitions.length > 0) {
+      const compSim = simulateCompetitionWeek(
+        nextWeek,
+        nextSeason,
+        competitions,
+        standings,
+        cupFixtures,
+        state.clubs,
+        state.leagues,
+        trophies,
+      );
+      standings = compSim.standings;
+      cupFixtures = compSim.cupFixtures;
+      competitionResults = [...competitionResults, ...compSim.results].slice(-400);
+      trophies = compSim.trophies;
+      for (const msg of compSim.messages.slice(0, 3)) {
+        newMessages.push({
+          id: `msg-comp-${nextWeek}-${msg.slice(0, 12)}-${Date.now()}`,
+          type: 'info',
+          title: 'Compétitions',
+          body: msg,
+          week: nextWeek,
+          season: nextSeason,
+          createdAt: new Date().toISOString(),
+          read: false,
+          action: 'none',
+        });
+      }
+    }
+
     let matchFixtures = [...state.matchFixtures];
     if (isLeagueMatchWeek(nextWeek)) {
       for (const client of myPlayers) {
@@ -886,6 +999,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
       worldPlayers = ageAllPlayers(worldPlayers);
       nextWeek = 1;
       nextSeason += 1;
+
+      const compInit = initializeCompetitions(
+        nextSeason,
+        state.leagues,
+        state.clubs,
+        state.agencyCountryCode,
+      );
+      competitions = compInit.competitions;
+      standings = compInit.standings;
+      cupFixtures = compInit.cupFixtures;
+      competitionResults = [];
 
       newMessages.push({
         id: `msg-season-${nextSeason}-${Date.now()}`,
@@ -916,6 +1040,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       messages,
       pendingOffers,
       matchFixtures,
+      competitions,
+      standings,
+      competitionResults,
+      cupFixtures,
+      trophies,
       totalRevenue: nextRevenue,
       totalExpenses: nextExpenses,
       currentTournament: createInitialTournament(
@@ -947,7 +1076,7 @@ export function formatGameDate(week: number, season: number): string {
 
 /** Pendant le tutoriel, seuls Scouting (étapes 1–2) puis tous les onglets (étape 3+) sont accessibles. */
 export function isTabLockedDuringTutorial(
-  tabName: 'index' | 'players' | 'scouting' | 'finance',
+  tabName: 'index' | 'players' | 'scouting' | 'finance' | 'competitions',
   isTutorialActive: boolean,
   tutorialStep: number,
 ): boolean {

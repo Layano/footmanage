@@ -1,4 +1,5 @@
 import { calculateOverallRating } from '../players/ratingEngine';
+import { estimateMonthlyWage } from '../simulation/salaryEngine';
 import { GAME_CONFIG } from '../../constants/gameConfig';
 import type { OutfieldPlayerAttributes } from '../../types/attributes';
 import type { OutfieldPlayer, Player } from '../../types/player';
@@ -103,13 +104,9 @@ export function generateSquadForClub(
     const isGem = i === gemIndex && league.tier !== 'junior';
     const potentialRating = potentialFromStats(currentDisplay, league, isGem);
 
-    const weeklyWage = league.tier === 'junior'
-      ? 0
-      : Math.round((club.reputation / 100) * randomInt(5_000, 80_000));
-
     const id = `player-${club.id}-${i}-${Date.now()}`;
 
-    return {
+    const basePlayer = {
       id,
       firstName,
       lastName,
@@ -128,17 +125,28 @@ export function generateSquadForClub(
       marketValue: Math.round(overallRating * randomInt(8_000, 25_000)),
       contract: {
         clubId: league.tier === 'junior' ? null : club.id,
-        weeklyWage,
+        monthlyWage: 0,
         startDate: '2025-07-01',
         endDate: '2028-06-30',
       },
-      status: league.tier === 'junior' ? 'free_agent' : 'active',
+      status: league.tier === 'junior' ? ('free_agent' as const) : ('active' as const),
       isClient: false,
-      currentTeam: league.tier === 'junior' ? `${club.name}` : undefined,
-      morale: randomInt(55, 90),
-      form: randomInt(50, 85),
+      morale: randomInt(60, 90),
+      form: randomInt(50, 80),
       seasonMinutes: 0,
       weeklyMinutes: 0,
+    } satisfies Omit<Player, 'attributes'> & { attributes: typeof attributes };
+
+    const monthlyWage =
+      league.tier === 'junior' ? 0 : estimateMonthlyWage(basePlayer as Player, club, league);
+
+    return {
+      ...basePlayer,
+      contract: {
+        ...basePlayer.contract,
+        monthlyWage,
+      },
+      currentTeam: league.tier === 'junior' ? `${club.name}` : undefined,
     };
   });
 }

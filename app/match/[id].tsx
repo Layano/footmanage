@@ -1,4 +1,4 @@
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -24,8 +24,22 @@ import type { Player } from '@/types/player';
 
 const MATCH_DURATION_MS = GAME_CONFIG.MATCH_DURATION_MS;
 
+type MatchPhase = 'loading' | 'live' | 'finished' | 'locker_room';
+
+function countGoalsFromEvents(events: MatchEvent[]): { home: number; away: number } {
+  let home = 0;
+  let away = 0;
+  for (const event of events) {
+    if (event.type !== 'goal') continue;
+    if (event.teamSide === 'home') home += 1;
+    else away += 1;
+  }
+  return { home, away };
+}
+
 export default function MatchScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const runMatchSimulation = useGameStore((s) => s.runMatchSimulation);
   const completeMatch = useGameStore((s) => s.completeMatch);
   const signProPlayer = useGameStore((s) => s.signProPlayer);
@@ -35,7 +49,7 @@ export default function MatchScreen() {
   const matchFixtures = useGameStore((s) => s.matchFixtures);
 
   const [gameMinute, setGameMinute] = useState(0);
-  const [phase, setPhase] = useState<'loading' | 'live' | 'finished'>('loading');
+  const [phase, setPhase] = useState<MatchPhase>('loading');
   const [visibleEvents, setVisibleEvents] = useState<MatchEvent[]>([]);
   const [negotiatingPlayer, setNegotiatingPlayer] = useState<Player | null>(null);
   const completedRef = useRef(false);
@@ -48,6 +62,11 @@ export default function MatchScreen() {
   const homeClub = getClubFromStore(fixture?.homeClubId ?? null);
   const awayClub = getClubFromStore(fixture?.awayClubId ?? null);
   const client = fixture ? findPlayerById(fixture.clientPlayerId)?.player : null;
+
+  const liveScore = useMemo(
+    () => countGoalsFromEvents(visibleEvents),
+    [visibleEvents],
+  );
 
   useEffect(() => {
     if (!id || fixture?.result) return;
@@ -102,9 +121,7 @@ export default function MatchScreen() {
     );
   }
 
-  const score = fixture.result
-    ? `${fixture.result.homeScore} - ${fixture.result.awayScore}`
-    : '0 - 0';
+  const scoreText = `${liveScore.home} - ${liveScore.away}`;
 
   return (
     <>
@@ -112,7 +129,7 @@ export default function MatchScreen() {
       <View style={styles.container}>
         <View style={styles.scoreboard}>
           <Text style={styles.clubName}>{homeClub.name}</Text>
-          <Text style={styles.score}>{score}</Text>
+          <Text style={styles.score}>{scoreText}</Text>
           <Text style={styles.clubName}>{awayClub.name}</Text>
         </View>
 
@@ -121,7 +138,7 @@ export default function MatchScreen() {
             <ActivityIndicator color={theme.colors.primary} />
           ) : (
             <Text style={styles.chronoText}>
-              {gameMinute}' {phase === 'finished' ? '· Terminé' : ''}
+              {gameMinute}' {phase === 'finished' || phase === 'locker_room' ? '· Terminé' : ''}
             </Text>
           )}
         </View>
@@ -130,58 +147,88 @@ export default function MatchScreen() {
           <Text style={styles.clientHint}>Votre client : {client.displayName}</Text>
         ) : null}
 
-        <FlatList
-          data={visibleEvents}
-          keyExtractor={(item, i) => `${item.minute}-${item.type}-${i}`}
-          style={styles.feed}
-          contentContainerStyle={styles.feedContent}
-          renderItem={({ item }) => (
-            <Text style={[styles.eventLine, item.type === 'goal' && styles.eventGoal]}>
-              {item.text}
-            </Text>
-          )}
-          ListEmptyComponent={
-            phase === 'loading' ? (
-              <Text style={styles.waiting}>Préparation du match…</Text>
-            ) : (
-              <Text style={styles.waiting}>Le match est en cours…</Text>
-            )
-          }
-        />
+        {phase !== 'locker_room' ? (
+          <FlatList
+            data={visibleEvents}
+            keyExtractor={(item, i) => `${item.minute}-${item.type}-${i}`}
+            style={styles.feed}
+            contentContainerStyle={styles.feedContent}
+            renderItem={({ item }) => (
+              <Text style={[styles.eventLine, item.type === 'goal' && styles.eventGoal]}>
+                {item.text}
+              </Text>
+            )}
+            ListEmptyComponent={
+              phase === 'loading' ? (
+                <Text style={styles.waiting}>Préparation du match…</Text>
+              ) : (
+                <Text style={styles.waiting}>Le match est en cours…</Text>
+              )
+            }
+          />
+        ) : null}
 
-        {phase === 'finished' && fixture.result ? (
+        {phase === 'finished' ? (
+          <View style={styles.endChoices}>
+            <Text style={styles.endTitle}>Coup de sifflet final</Text>
+            <Text style={styles.endSubtitle}>Que souhaitez-vous faire ?</Text>
+            <View style={styles.endActions}>
+              <Pressable style={styles.leaveBtn} onPress={() => router.back()}>
+                <Text style={styles.leaveBtnText}>Quitter</Text>
+              </Pressable>
+              <Pressable style={styles.lockerBtn} onPress={() => setPhase('locker_room')}>
+                <Text style={styles.lockerBtnText}>Aller au vestiaire</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
+        {phase === 'locker_room' && fixture.result ? (
           <View style={styles.postMatch}>
-            <Text style={styles.postTitle}>Vestiaire — Discussions post-match</Text>
+            <View style={styles.lockerHeader}>
+              <Text style={styles.postTitle}>Vestiaire</Text>
+              <Pressable onPress={() => router.back()}>
+                <Text style={styles.leaveLink}>Quitter</Text>
+              </Pressable>
+            </View>
             <Text style={styles.postSubtitle}>
-              Repérez de nouveaux talents (réputation requise selon le niveau)
+              Discutez avec les joueurs repérés (réputation requise selon le niveau)
             </Text>
-            {postMatchPlayers.slice(0, 12).map((player) => {
-              const stat = [...fixture.result!.homeStats, ...fixture.result!.awayStats].find(
-                (s) => s.playerId === player.id,
-              );
-              const requiredRep = getRequiredAgencyReputation(player);
-              const canApproach = agencyReputation >= requiredRep - 5;
+            <FlatList
+              data={postMatchPlayers.slice(0, 12)}
+              keyExtractor={(p) => p.id}
+              style={styles.lockerList}
+              renderItem={({ item: player }) => {
+                const stat = [...fixture.result!.homeStats, ...fixture.result!.awayStats].find(
+                  (s) => s.playerId === player.id,
+                );
+                const requiredRep = getRequiredAgencyReputation(player);
+                const canApproach = agencyReputation >= requiredRep - 5;
 
-              return (
-                <View key={player.id} style={styles.playerRow}>
-                  <View style={styles.playerInfo}>
-                    <Text style={styles.playerName}>{player.displayName}</Text>
-                    <Text style={styles.playerMeta}>
-                      {stat ? `${stat.minutes}' · Note ${stat.rating}` : ''} · Réputation min.{' '}
-                      {requiredRep}
-                    </Text>
+                return (
+                  <View style={styles.playerRow}>
+                    <View style={styles.playerInfo}>
+                      <Text style={styles.playerName}>{player.displayName}</Text>
+                      <Text style={styles.playerMeta}>
+                        {stat ? `${stat.minutes}' · Note ${stat.rating}` : ''} · Réputation min.{' '}
+                        {requiredRep}
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={[styles.talkBtn, !canApproach && styles.talkBtnDisabled]}
+                      onPress={() => canApproach && setNegotiatingPlayer(player)}
+                      disabled={!canApproach}>
+                      <Text style={styles.talkBtnText}>
+                        {canApproach ? 'Discuter' : 'Refuse'}
+                      </Text>
+                    </Pressable>
                   </View>
-                  <Pressable
-                    style={[styles.talkBtn, !canApproach && styles.talkBtnDisabled]}
-                    onPress={() => canApproach && setNegotiatingPlayer(player)}
-                    disabled={!canApproach}>
-                    <Text style={styles.talkBtnText}>
-                      {canApproach ? 'Discuter' : 'Refuse'}
-                    </Text>
-                  </Pressable>
-                </View>
-              );
-            })}
+                );
+              }}
+              ListEmptyComponent={
+                <Text style={styles.waiting}>Aucun joueur à approcher pour le moment.</Text>
+              }
+            />
           </View>
         ) : null}
       </View>
@@ -281,19 +328,79 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     padding: theme.spacing.lg,
   },
+  endChoices: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    padding: theme.spacing.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    gap: theme.spacing.sm,
+  },
+  endTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: theme.colors.text,
+    textAlign: 'center',
+  },
+  endSubtitle: {
+    fontSize: 14,
+    color: theme.colors.textMuted,
+    textAlign: 'center',
+    marginBottom: theme.spacing.sm,
+  },
+  endActions: {
+    flexDirection: 'row',
+    gap: theme.spacing.sm,
+  },
+  leaveBtn: {
+    flex: 1,
+    padding: theme.spacing.md,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: 'center',
+  },
+  leaveBtnText: {
+    color: theme.colors.textMuted,
+    fontWeight: '600',
+  },
+  lockerBtn: {
+    flex: 2,
+    padding: theme.spacing.md,
+    borderRadius: 10,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+  },
+  lockerBtnText: {
+    color: theme.colors.text,
+    fontWeight: '700',
+  },
   postMatch: {
-    maxHeight: 220,
+    flex: 1,
     backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: theme.spacing.md,
     borderWidth: 1,
     borderColor: theme.colors.primary,
   },
+  lockerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  lockerList: {
+    flex: 1,
+  },
   postTitle: {
     fontSize: 15,
     fontWeight: '700',
     color: theme.colors.primary,
-    marginBottom: 4,
+  },
+  leaveLink: {
+    fontSize: 14,
+    color: theme.colors.textMuted,
+    fontWeight: '600',
   },
   postSubtitle: {
     fontSize: 12,

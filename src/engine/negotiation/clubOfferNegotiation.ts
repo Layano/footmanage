@@ -27,7 +27,7 @@ export function evaluateClubNegotiation(
   const orig = offer.originalTerms;
   let score = 100;
 
-  const wageIncrease = (counter.weeklyWage - orig.weeklyWage) / Math.max(orig.weeklyWage, 1);
+  const wageIncrease = (counter.monthlyWage - orig.monthlyWage) / Math.max(orig.monthlyWage, 1);
   if (wageIncrease > 0) score -= wageIncrease * 120;
   if (wageIncrease > 0.2) score -= 25;
 
@@ -81,7 +81,7 @@ export function evaluateClubNegotiation(
 
 export function getDefaultCounterTerms(offer: ClubContractOffer): NegotiableClubOfferTerms {
   return {
-    weeklyWage: offer.weeklyWage,
+    monthlyWage: offer.monthlyWage,
     fee: offer.fee,
     playingTimeRole: offer.playingTimeRole,
     performanceBonus: offer.performanceBonus,
@@ -97,8 +97,8 @@ export function getClubOfferLimits(offer: ClubContractOffer): {
 } {
   const o = offer.originalTerms;
   return {
-    minWage: Math.round(o.weeklyWage * 0.85),
-    maxWage: Math.round(o.weeklyWage * 1.35),
+    minWage: Math.round(o.monthlyWage * 0.85),
+    maxWage: Math.round(o.monthlyWage * 1.35),
     minFee: Math.round(o.fee * 0.7),
     maxFee: Math.round(o.fee * 1.2),
   };

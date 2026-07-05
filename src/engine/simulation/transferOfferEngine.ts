@@ -11,6 +11,7 @@ import type { GameMessage } from '@/types/game';
 import type { League } from '@/types/league';
 import type { Player } from '@/types/player';
 import type { ClubContractOffer, PerformanceBonusType } from '@/types/transfer';
+import { estimateMonthlyWage } from './salaryEngine';
 import { isCountryInTransferWindow } from './transferWindow';
 import { isGoalkeeper } from '@/types/player';
 
@@ -23,11 +24,6 @@ function pickBonusType(player: Player): PerformanceBonusType {
   if (player.position === 'CB' || player.position === 'DM') return 'clean_sheet';
   if (player.position === 'ST' || player.position === 'WING') return 'goal';
   return 'appearance';
-}
-
-function estimateWeeklyWage(player: Player, club: Club): number {
-  const base = Math.round((player.overallRating / 99) * club.wageBudget * 0.08);
-  return Math.max(500, Math.min(base, club.wageBudget * 0.15));
 }
 
 function estimateTransferFee(player: Player, club: Club): number {
@@ -50,7 +46,7 @@ function createOfferMessage(offer: ClubContractOffer, player: Player, club: Club
     id: `msg-offer-${offer.id}`,
     type: isLoan ? 'loan' : 'transfer',
     title: isLoan ? `Offre de prêt — ${club.shortName}` : `Offre de transfert — ${club.shortName}`,
-    body: `${club.name} propose ${player.displayName} : ${roleLabel}, ${offer.weeklyWage.toLocaleString('fr-FR')} €/sem., prime ${bonusLabel}${offer.fee > 0 ? `, ${isLoan ? 'indemnité prêt' : 'prix'} ${offer.fee.toLocaleString('fr-FR')} €` : ''}.`,
+    body: `${club.name} propose ${player.displayName} : ${roleLabel}, ${offer.monthlyWage.toLocaleString('fr-FR')} €/mois, prime ${bonusLabel}${offer.fee > 0 ? `, ${isLoan ? 'indemnité prêt' : 'prix'} ${offer.fee.toLocaleString('fr-FR')} €` : ''}.`,
     week: offer.week,
     season: offer.season,
     createdAt: new Date().toISOString(),
@@ -119,10 +115,11 @@ export function generateWeeklyTransferOffers(
     }
 
     const club = countryClubs[randomInt(0, countryClubs.length - 1)]!;
+    const league = leagues.find((l) => l.id === club.leagueId);
     const isLoan = Math.random() < 0.3;
     const bonusType = pickBonusType(client);
     const playingTimeRole = pickRandomPlayingTimeRole();
-    const weeklyWage = estimateWeeklyWage(client, club);
+    const monthlyWage = estimateMonthlyWage(client, club, league);
     const fee = isLoan
       ? randomInt(5_000, 50_000)
       : client.contract.clubId
@@ -130,7 +127,7 @@ export function generateWeeklyTransferOffers(
         : randomInt(0, Math.round(estimateTransferFee(client, club) * 0.3));
 
     const terms = {
-      weeklyWage,
+      monthlyWage,
       fee,
       playingTimeRole,
       performanceBonus: randomInt(200, bonusType === 'appearance' ? 800 : 3_000),
@@ -177,9 +174,9 @@ export function expireOldOffers(
   return { offers: updated, expiredIds };
 }
 
-/** Normalise une offre chargée (migration v6). */
+/** Normalise une offre chargée (migration attributs / salaires). */
 export function normalizeClubOffer(
-  offer: ClubContractOffer & { expectedMinutesPercent?: number },
+  offer: ClubContractOffer & { expectedMinutesPercent?: number; weeklyWage?: number },
 ): ClubContractOffer {
   const playingTimeRole =
     offer.playingTimeRole ??
@@ -187,8 +184,18 @@ export function normalizeClubOffer(
       ? minutesPercentToRole(offer.expectedMinutesPercent)
       : pickRandomPlayingTimeRole());
 
+  const legacyWage = offer.weeklyWage ?? offer.originalTerms?.weeklyWage;
+  const monthlyWage =
+    offer.monthlyWage ??
+    offer.originalTerms?.monthlyWage ??
+    (legacyWage != null
+      ? legacyWage > 5_000
+        ? Math.round(legacyWage / 4)
+        : legacyWage * 4
+      : 1_000);
+
   const terms = {
-    weeklyWage: offer.weeklyWage,
+    monthlyWage,
     fee: offer.fee,
     playingTimeRole,
     performanceBonus: offer.performanceBonus,
@@ -197,7 +204,9 @@ export function normalizeClubOffer(
 
   return {
     ...offer,
-    originalTerms: offer.originalTerms ?? terms,
+    originalTerms: offer.originalTerms
+      ? { ...offer.originalTerms, monthlyWage: offer.originalTerms.monthlyWage ?? monthlyWage }
+      : terms,
     ...terms,
   };
 }

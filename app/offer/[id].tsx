@@ -77,7 +77,7 @@ export default function OfferDetailScreen() {
           </Text>
           <Text style={styles.row}>
             <Text style={styles.label}>Salaire · </Text>
-            {offer.weeklyWage.toLocaleString('fr-FR')} € / semaine
+            {offer.monthlyWage.toLocaleString('fr-FR')} € / mois
           </Text>
           <Text style={styles.row}>
             <Text style={styles.label}>Prime performance · </Text>

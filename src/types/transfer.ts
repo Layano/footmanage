@@ -6,11 +6,13 @@ export type PerformanceBonusType = 'goal' | 'clean_sheet' | 'appearance';
 
 /** Termes négociables d'une offre club. */
 export interface NegotiableClubOfferTerms {
-  weeklyWage: number;
+  monthlyWage: number;
   fee: number;
   playingTimeRole: PlayingTimeRole;
   performanceBonus: number;
   contractYears: number;
+  /** @deprecated Migré vers monthlyWage. */
+  weeklyWage?: number;
 }
 
 /** Offre de transfert ou de prêt d'un club pour un client de l'agence. */

@@ -24,10 +24,13 @@ export interface PlayerPotential {
 
 export interface PlayerContract {
   clubId: string | null;
-  weeklyWage: number;
+  /** Salaire mensuel brut (€). */
+  monthlyWage: number;
   startDate: string;
   endDate: string;
   releaseClause?: number;
+  /** @deprecated Ancien champ hebdomadaire — migré vers monthlyWage. */
+  weeklyWage?: number;
 }
 
 /**

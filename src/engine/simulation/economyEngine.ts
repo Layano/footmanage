@@ -1,5 +1,6 @@
-import type { Staff } from '../../types/staff';
 import { GAME_CONFIG } from '../../constants/gameConfig';
+import type { Staff } from '../../types/staff';
+import { weeklySalaryCommission } from './salaryEngine';
 
 export interface WeeklyEconomyResult {
   staffCost: number;
@@ -20,9 +21,9 @@ export function processWeeklyEconomy(
 
   const clientCommissions = clients.reduce((sum, player) => {
     const rate = player.representationContract?.salaryCommissionPercent ?? 0;
-    const wage = player.contract.weeklyWage;
+    const wage = player.contract.monthlyWage;
     if (rate <= 0 || wage <= 0) return sum;
-    return sum + Math.round((wage * rate) / 100);
+    return sum + weeklySalaryCommission(wage, rate);
   }, 0);
 
   const randomCommission =

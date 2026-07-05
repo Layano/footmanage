@@ -110,7 +110,7 @@ export function generateNeighborhoodAmateurs(
       marketValue: randomInt(5_000, 25_000),
       contract: {
         clubId: null,
-        weeklyWage: 0,
+        monthlyWage: 0,
         startDate: `${season}-01-01`,
         endDate: `${season}-12-31`,
       },

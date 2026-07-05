@@ -80,8 +80,8 @@ export default function PlayerDetailScreen() {
             <View style={styles.infoCell}>
               <Text style={styles.infoLabel}>Salaire</Text>
               <Text style={styles.infoValue}>
-                {player.contract.weeklyWage > 0
-                  ? `${player.contract.weeklyWage.toLocaleString('fr-FR')} €/sem.`
+                {player.contract.monthlyWage > 0
+                  ? `${player.contract.monthlyWage.toLocaleString('fr-FR')} €/mois`
                   : 'Sans club (amateur)'}
               </Text>
             </View>

@@ -92,7 +92,7 @@ export function ClubOfferNegotiationPanel({
             <Text style={styles.section}>Offre initiale du club</Text>
             <Text style={styles.originalLine}>
               {PLAYING_TIME_ROLE_LABELS[offer.originalTerms.playingTimeRole]} ·{' '}
-              {offer.originalTerms.weeklyWage.toLocaleString('fr-FR')} €/sem. ·{' '}
+              {offer.originalTerms.monthlyWage.toLocaleString('fr-FR')} €/mois ·{' '}
               {offer.originalTerms.fee.toLocaleString('fr-FR')} €
             </Text>
 
@@ -112,17 +112,17 @@ export function ClubOfferNegotiationPanel({
             </View>
 
             <View style={styles.row}>
-              <Text style={styles.label}>Salaire hebdo (€)</Text>
+              <Text style={styles.label}>Salaire mensuel (€)</Text>
               <TextInput
                 style={styles.input}
                 keyboardType="numeric"
-                value={String(terms.weeklyWage)}
+                value={String(terms.monthlyWage)}
                 onChangeText={(t) => {
                   const n = Number.parseInt(t.replace(/\D/g, ''), 10);
                   if (Number.isFinite(n)) {
                     setTerms({
                       ...terms,
-                      weeklyWage: Math.min(limits.maxWage, Math.max(limits.minWage, n)),
+                      monthlyWage: Math.min(limits.maxWage, Math.max(limits.minWage, n)),
                     });
                   }
                 }}
