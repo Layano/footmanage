@@ -90,6 +90,10 @@ export default function InboxScreen() {
         router.push(`/match/${message.matchId}`);
         return;
       }
+      if (message.action === 'match_scout' && message.matchId) {
+        router.push(`/match/scout/${message.matchId}`);
+        return;
+      }
       if (message.playerId) {
         router.push(`/player/${message.playerId}`);
       }

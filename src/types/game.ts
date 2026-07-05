@@ -13,7 +13,8 @@ export type InboxAction =
   | 'none'
   | 'transfer_offer'
   | 'loan_offer'
-  | 'match_invite';
+  | 'match_invite'
+  | 'match_scout';
 
 export interface GameMessage {
   id: string;

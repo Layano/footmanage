@@ -3,9 +3,11 @@ import {
   type PlayingTimeRole,
 } from '@/constants/playingTime';
 import type { Club } from '@/types/club';
-import type { MatchEvent, MatchFixture, MatchResult, PlayerMatchStat } from '@/types/match';
+import type { GameMessage } from '@/types/game';
+import type { MatchEvent, MatchFixture, MatchResult, MatchScoutProfile, PlayerMatchStat } from '@/types/match';
 import type { Player } from '@/types/player';
 import { isGoalkeeper } from '@/types/player';
+import { buildMatchScoutProfiles } from './matchScouting';
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -189,6 +191,92 @@ export function simulateMatch(
   };
 }
 
+/** Simule un match et prépare les profils de scouting. */
+export function simulateMatchFixture(
+  fixture: MatchFixture,
+  homeClub: Club,
+  awayClub: Club,
+  homeSquad: Player[],
+  awaySquad: Player[],
+  myPlayerIds: Set<string>,
+  clientPlayingTimeRole?: import('@/constants/playingTime').PlayingTimeRole,
+): { result: MatchResult; scoutProfiles: MatchScoutProfile[] } {
+  const result = simulateMatch(
+    homeClub,
+    awayClub,
+    homeSquad,
+    awaySquad,
+    fixture.clientPlayerId,
+    clientPlayingTimeRole,
+  );
+
+  const allPlayers = [...homeSquad, ...awaySquad];
+  const scoutProfiles = buildMatchScoutProfiles(result, allPlayers, myPlayerIds);
+
+  return { result, scoutProfiles };
+}
+
+/** Applique les minutes et la forme après un match (assisté ou auto-simulé). */
+export function applyMatchResultToPlayers(
+  fixture: MatchFixture,
+  myPlayers: Player[],
+  worldPlayers: Player[],
+): { myPlayers: Player[]; worldPlayers: Player[] } {
+  if (!fixture.result) return { myPlayers, worldPlayers };
+
+  const allStats = [...fixture.result.homeStats, ...fixture.result.awayStats];
+  const clientStat = allStats.find((s) => s.playerId === fixture.clientPlayerId);
+
+  const nextMyPlayers = myPlayers.map((p) => {
+    if (p.id !== fixture.clientPlayerId) return p;
+    const mins = clientStat?.minutes ?? 0;
+    return {
+      ...p,
+      weeklyMinutes: mins,
+      seasonMinutes: p.seasonMinutes + mins,
+      form: Math.min(100, p.form + (clientStat && clientStat.rating >= 7 ? 2 : -1)),
+    };
+  });
+
+  const nextWorldPlayers = worldPlayers.map((p) => {
+    const stat = allStats.find((s) => s.playerId === p.id);
+    if (!stat) return p;
+    return {
+      ...p,
+      weeklyMinutes: stat.minutes,
+      seasonMinutes: p.seasonMinutes + stat.minutes,
+    };
+  });
+
+  return { myPlayers: nextMyPlayers, worldPlayers: nextWorldPlayers };
+}
+
+export function createMatchSkippedMessage(
+  fixture: MatchFixture,
+  home: Club,
+  away: Club,
+  client: Player,
+  scoutCount: number,
+): GameMessage {
+  const score = fixture.result
+    ? `${fixture.result.homeScore} - ${fixture.result.awayScore}`
+    : '? - ?';
+
+  return {
+    id: `msg-match-skipped-${fixture.id}`,
+    type: 'match',
+    title: `Résultat — ${home.shortName} ${score} ${away.shortName}`,
+    body: `Vous n'avez pas assisté au match de ${client.displayName}. ${scoutCount} joueur${scoutCount > 1 ? 's' : ''} à observer dans les équipes ayant joué.`,
+    week: fixture.week,
+    season: fixture.season,
+    createdAt: new Date().toISOString(),
+    read: false,
+    playerId: client.id,
+    action: 'match_scout',
+    matchId: fixture.id,
+  };
+}
+
 /** Crée une invitation match pour un client sous contrat club. */
 export function createMatchInvite(
   client: Player,
@@ -226,7 +314,7 @@ export function createMatchInviteMessage(fixture: MatchFixture, home: Club, away
     id: `msg-match-${fixture.id}`,
     type: 'match' as const,
     title: `Invitation match — ${home.shortName} vs ${away.shortName}`,
-    body: `${client.displayName} joue avec ${home.name}. Assistez au match pour rencontrer les joueurs après la rencontre.`,
+    body: `${client.displayName} joue avec ${home.name}. Assistez au match ou il sera simulé automatiquement la semaine suivante.`,
     week: fixture.week,
     season: fixture.season,
     createdAt: new Date().toISOString(),

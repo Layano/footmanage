@@ -12,11 +12,15 @@ import { buildTournamentForWeek } from '@/engine/scouting/tournamentEngine';
 import { buildWorldDatabase } from '@/engine/world/worldGenerator';
 import { processWeeklyEconomy } from '@/engine/simulation/economyEngine';
 import {
+  applyMatchResultToPlayers,
   createMatchInvite,
   createMatchInviteMessage,
+  createMatchSkippedMessage,
   getClubSquad,
   simulateMatch,
+  simulateMatchFixture,
 } from '@/engine/simulation/matchEngine';
+import { ensureLeagueSquads } from '@/engine/world/leagueSquadEnsurer';
 import {
   adjustAgencyReputation,
   reputationDeltaForMatchAttendance,
@@ -207,6 +211,12 @@ function withPlayerDefaults(player: Player, clubs: Club[], leagues: League[]): P
 function buildFreshGameState(config: NewGameConfig): PersistedGameState {
   const country = getCountryByCode(config.countryCode) ?? getCountryByCode('FRA')!;
   const world = buildWorldDatabase({ agencyCountryCode: config.countryCode });
+  const worldPlayers = ensureLeagueSquads(
+    world.clubs,
+    world.leagues,
+    world.players,
+    config.countryCode,
+  );
   const compInit = initializeCompetitions(
     2025,
     world.leagues,
@@ -225,7 +235,7 @@ function buildFreshGameState(config: NewGameConfig): PersistedGameState {
     staff: [],
     leagues: world.leagues,
     clubs: world.clubs,
-    worldPlayers: world.players,
+    worldPlayers,
     messages: [
       {
         id: 'msg-welcome',
@@ -340,6 +350,12 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
   }
 
   const mapPlayer = (p: Player) => withPlayerDefaults(p, clubs, leagues);
+  const worldPlayers = ensureLeagueSquads(
+    clubs,
+    leagues,
+    (saved.worldPlayers ?? defaults.worldPlayers).map(mapPlayer),
+    agencyCountryCode,
+  );
 
   return {
     ...defaults,
@@ -371,7 +387,7 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
     trophies: saved.trophies ?? [],
     myPlayers: (saved.myPlayers ?? []).map(mapPlayer),
     scoutedPlayers: (saved.scoutedPlayers ?? []).map(mapPlayer),
-    worldPlayers: (saved.worldPlayers ?? []).map(mapPlayer),
+    worldPlayers,
     messages: (saved.messages ?? []).map((m) => ({ ...m, action: m.action ?? 'none' })),
   };
 }
@@ -419,6 +435,93 @@ function tryGenerateTransferOffers(state: {
     pendingOffers: [...state.pendingOffers, ...generated.offers],
     myPlayers: generated.updatedClients,
     messages: generated.messages,
+  };
+}
+
+/** Simule les matchs non suivis de la semaine écoulée. */
+function resolveStaleMatchFixtures(
+  week: number,
+  season: number,
+  matchFixtures: MatchFixture[],
+  clubs: Club[],
+  myPlayers: Player[],
+  worldPlayers: Player[],
+): {
+  matchFixtures: MatchFixture[];
+  myPlayers: Player[];
+  worldPlayers: Player[];
+  messages: GameMessage[];
+} {
+  const messages: GameMessage[] = [];
+  let nextMyPlayers = myPlayers;
+  let nextWorldPlayers = worldPlayers;
+  const myIds = new Set(myPlayers.map((p) => p.id));
+
+  const pending = matchFixtures.filter(
+    (f) => f.week === week && f.season === season && f.status === 'scheduled',
+  );
+
+  if (pending.length === 0) {
+    return { matchFixtures, myPlayers, worldPlayers, messages };
+  }
+
+  const updated = matchFixtures.map((fixture) => {
+    if (fixture.week !== week || fixture.season !== season || fixture.status !== 'scheduled') {
+      return fixture;
+    }
+
+    const homeClub = clubs.find((c) => c.id === fixture.homeClubId);
+    const awayClub = clubs.find((c) => c.id === fixture.awayClubId);
+    if (!homeClub || !awayClub) return fixture;
+
+    const allPlayers = [...nextWorldPlayers, ...nextMyPlayers];
+    const homeSquad = getClubSquad(fixture.homeClubId, allPlayers);
+    const awaySquad = getClubSquad(fixture.awayClubId, allPlayers);
+    const client = nextMyPlayers.find((p) => p.id === fixture.clientPlayerId);
+
+    const { result, scoutProfiles } = simulateMatchFixture(
+      fixture,
+      homeClub,
+      awayClub,
+      homeSquad,
+      awaySquad,
+      myIds,
+      client?.playingTimeRole,
+    );
+
+    const resolvedFixture: MatchFixture = {
+      ...fixture,
+      result,
+      scoutProfiles,
+      status: 'skipped',
+    };
+
+    const applied = applyMatchResultToPlayers(resolvedFixture, nextMyPlayers, nextWorldPlayers);
+    nextMyPlayers = applied.myPlayers.map((p) =>
+      p.id === fixture.clientPlayerId ? tryWeeklyPlayerEvolution(p) : p,
+    );
+    nextWorldPlayers = applied.worldPlayers;
+
+    if (client) {
+      messages.push(
+        createMatchSkippedMessage(
+          resolvedFixture,
+          homeClub,
+          awayClub,
+          client,
+          scoutProfiles.length,
+        ),
+      );
+    }
+
+    return resolvedFixture;
+  });
+
+  return {
+    matchFixtures: updated,
+    myPlayers: nextMyPlayers,
+    worldPlayers: nextWorldPlayers,
+    messages,
   };
 }
 
@@ -813,54 +916,38 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const homeSquad = getClubSquad(fixture.homeClubId, allPlayers);
     const awaySquad = getClubSquad(fixture.awayClubId, allPlayers);
     const client = state.myPlayers.find((p) => p.id === fixture.clientPlayerId);
-    const result = simulateMatch(
+    const myIds = new Set(state.myPlayers.map((p) => p.id));
+
+    const { result, scoutProfiles } = simulateMatchFixture(
+      fixture,
       homeClub,
       awayClub,
       homeSquad,
       awaySquad,
-      fixture.clientPlayerId,
+      myIds,
       client?.playingTimeRole,
     );
 
     const matchFixtures = state.matchFixtures.map((m) =>
-      m.id === matchId ? { ...m, result } : m,
+      m.id === matchId ? { ...m, result, scoutProfiles } : m,
     );
     set({ matchFixtures });
     void get().saveGame();
-    return { ...fixture, result };
+    return { ...fixture, result, scoutProfiles };
   },
 
   completeMatch: async (matchId: string) => {
     const state = get();
     const fixture = state.matchFixtures.find((m) => m.id === matchId);
-    if (!fixture?.result || fixture.status === 'watched') return;
+    if (!fixture?.result || fixture.status === 'watched' || fixture.status === 'skipped') return;
+
+    const applied = applyMatchResultToPlayers(fixture, state.myPlayers, state.worldPlayers);
+    let myPlayers = applied.myPlayers.map((p) =>
+      p.id === fixture.clientPlayerId ? tryWeeklyPlayerEvolution(p) : p,
+    );
 
     const allStats = [...fixture.result.homeStats, ...fixture.result.awayStats];
     const clientStat = allStats.find((s) => s.playerId === fixture.clientPlayerId);
-
-    let myPlayers = state.myPlayers.map((p) => {
-      if (p.id !== fixture.clientPlayerId) return p;
-      const mins = clientStat?.minutes ?? 0;
-      return {
-        ...p,
-        weeklyMinutes: mins,
-        seasonMinutes: p.seasonMinutes + mins,
-        form: Math.min(100, p.form + (clientStat && clientStat.rating >= 7 ? 2 : -1)),
-      };
-    });
-
-    myPlayers = myPlayers.map((p) => tryWeeklyPlayerEvolution(p));
-
-    let worldPlayers = state.worldPlayers.map((p) => {
-      const stat = allStats.find((s) => s.playerId === p.id);
-      if (!stat) return p;
-      return {
-        ...p,
-        weeklyMinutes: stat.minutes,
-        seasonMinutes: p.seasonMinutes + stat.minutes,
-      };
-    });
-
     const repDelta = clientStat ? reputationDeltaForMatchAttendance(clientStat.rating) : 0;
     const nextAgency = adjustAgencyReputation(state.agency, repDelta);
 
@@ -871,7 +958,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const nextState: PersistedGameState = {
       ...state,
       myPlayers,
-      worldPlayers,
+      worldPlayers: applied.worldPlayers,
       matchFixtures,
       agency: nextAgency,
     };
@@ -920,6 +1007,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let myPlayers = evolveAllPlayers(state.myPlayers);
     let scoutedPlayers = evolveAllPlayers(state.scoutedPlayers);
     let worldPlayers = evolveAllPlayers(state.worldPlayers);
+
+    const staleMatches = resolveStaleMatchFixtures(
+      state.currentWeek,
+      state.currentSeason,
+      state.matchFixtures,
+      state.clubs,
+      myPlayers,
+      worldPlayers,
+    );
+    let matchFixtures = staleMatches.matchFixtures;
+    myPlayers = staleMatches.myPlayers;
+    worldPlayers = staleMatches.worldPlayers;
+    newMessages.push(...staleMatches.messages);
 
     let pendingOffers = state.pendingOffers;
 
@@ -978,19 +1078,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
     }
 
-    let matchFixtures = [...state.matchFixtures];
+    let matchFixturesForWeek = [...matchFixtures];
     if (isLeagueMatchWeek(nextWeek)) {
       for (const client of myPlayers) {
         if (!client.contract.clubId) continue;
         const fixture = createMatchInvite(client, state.clubs, worldPlayers, nextWeek, nextSeason);
-        if (!fixture || matchFixtures.some((m) => m.id === fixture.id)) continue;
+        if (!fixture || matchFixturesForWeek.some((m) => m.id === fixture.id)) continue;
         const home = state.clubs.find((c) => c.id === fixture.homeClubId);
         const away = state.clubs.find((c) => c.id === fixture.awayClubId);
         if (!home || !away) continue;
-        matchFixtures.push(fixture);
+        matchFixturesForWeek.push(fixture);
         newMessages.push(createMatchInviteMessage(fixture, home, away, client));
       }
     }
+    matchFixtures = matchFixturesForWeek;
 
     const isSeasonEnd = nextWeek > WEEKS_PER_SEASON;
     if (isSeasonEnd) {

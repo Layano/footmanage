@@ -12,6 +12,7 @@ import {
 import { SigningNegotiationPanel } from '@/components/negotiation/SigningNegotiationPanel';
 import { GAME_CONFIG } from '@/constants/gameConfig';
 import { theme } from '@/constants/theme';
+import { formatEstimatedRange } from '@/engine/simulation/matchScouting';
 import { getRequiredAgencyReputation } from '@/engine/simulation/reputationEngine';
 import {
   findPlayerById,
@@ -104,14 +105,7 @@ export default function MatchScreen() {
     void completeMatch(id);
   }, [phase, id, completeMatch]);
 
-  const postMatchPlayers = useMemo(() => {
-    if (!fixture?.result) return [];
-    const ids = new Set(myPlayers.map((p) => p.id));
-    const allStats = [...fixture.result.homeStats, ...fixture.result.awayStats];
-    return allStats
-      .map((s) => findPlayerById(s.playerId)?.player)
-      .filter((p): p is Player => !!p && !ids.has(p.id) && !p.isClient);
-  }, [fixture?.result, myPlayers]);
+  const scoutProfiles = fixture?.scoutProfiles ?? [];
 
   if (!fixture || !homeClub || !awayClub) {
     return (
@@ -192,16 +186,16 @@ export default function MatchScreen() {
               </Pressable>
             </View>
             <Text style={styles.postSubtitle}>
-              Discutez avec les joueurs repérés (réputation requise selon le niveau)
+              Niveau estimé sur 20 — la vraie note est dans la fourchette affichée
             </Text>
             <FlatList
-              data={postMatchPlayers.slice(0, 12)}
-              keyExtractor={(p) => p.id}
+              data={scoutProfiles}
+              keyExtractor={(item) => item.playerId}
               style={styles.lockerList}
-              renderItem={({ item: player }) => {
-                const stat = [...fixture.result!.homeStats, ...fixture.result!.awayStats].find(
-                  (s) => s.playerId === player.id,
-                );
+              renderItem={({ item }) => {
+                const player = findPlayerById(item.playerId)?.player;
+                if (!player) return null;
+
                 const requiredRep = getRequiredAgencyReputation(player);
                 const canApproach = agencyReputation >= requiredRep - 5;
 
@@ -210,7 +204,11 @@ export default function MatchScreen() {
                     <View style={styles.playerInfo}>
                       <Text style={styles.playerName}>{player.displayName}</Text>
                       <Text style={styles.playerMeta}>
-                        {stat ? `${stat.minutes}' · Note ${stat.rating}` : ''} · Réputation min.{' '}
+                        Niveau estimé : {formatEstimatedRange(item.estimatedMin, item.estimatedMax)}
+                      </Text>
+                      <Text style={styles.playerMeta}>
+                        {item.minutes}' · Note match {item.matchRating}
+                        {item.goals > 0 ? ` · ${item.goals} but${item.goals > 1 ? 's' : ''}` : ''} · Réputation min.{' '}
                         {requiredRep}
                       </Text>
                     </View>

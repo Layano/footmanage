@@ -27,6 +27,19 @@ export interface PlayerMatchStat {
   cleanSheet: boolean;
 }
 
+/** Profil repéré après un match — note réelle cachée dans la fourchette estimée. */
+export interface MatchScoutProfile {
+  playerId: string;
+  clubId: string;
+  /** Note estimée min (échelle 1–20). */
+  estimatedMin: number;
+  /** Note estimée max (échelle 1–20). */
+  estimatedMax: number;
+  minutes: number;
+  goals: number;
+  matchRating: number;
+}
+
 export interface MatchResult {
   homeScore: number;
   awayScore: number;
@@ -45,4 +58,6 @@ export interface MatchFixture {
   clientPlayerId: string;
   status: MatchStatus;
   result?: MatchResult;
+  /** Joueurs repérables après le match (fourchette de niveau estimée). */
+  scoutProfiles?: MatchScoutProfile[];
 }
