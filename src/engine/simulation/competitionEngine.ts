@@ -15,6 +15,7 @@ import type {
 } from '@/types/competition';
 import type { League } from '@/types/league';
 import type { LeagueTier } from '@/types/world';
+import { isLeagueMatchWeek } from './transferWindow';
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
@@ -32,13 +33,17 @@ function samplePoisson(lambda: number): number {
   return k - 1;
 }
 
+/**
+ * Score selon l'écart de niveau : un D1 contre un D4/D5
+ * peut marquer 4, 5, 6 buts ou plus.
+ */
 function simulateQuickScore(homeRep: number, awayRep: number): { home: number; away: number } {
-  const diff = (homeRep - awayRep) / 45;
-  const homeLambda = clamp(1.45 + diff, 0.3, 3);
-  const awayLambda = clamp(1.15 - diff, 0.25, 2.8);
+  const gap = homeRep - awayRep;
+  const homeLambda = clamp(1.35 + Math.max(0, gap) * 0.05 - Math.max(0, -gap) * 0.02, 0.2, 5.5);
+  const awayLambda = clamp(1.1 + Math.max(0, -gap) * 0.05 - Math.max(0, gap) * 0.02, 0.15, 5.2);
   return {
-    home: Math.min(samplePoisson(homeLambda), 6),
-    away: Math.min(samplePoisson(awayLambda), 6),
+    home: Math.min(samplePoisson(homeLambda), 9),
+    away: Math.min(samplePoisson(awayLambda), 9),
   };
 }
 
@@ -270,7 +275,7 @@ function awardTrophy(
   };
 }
 
-/** Résultat de match client à intégrer aux classements. */
+/** Résultat de match client à intégrer aux classements ou aux coupes. */
 export interface ExternalMatchResult {
   homeClubId: string;
   awayClubId: string;
@@ -278,7 +283,46 @@ export interface ExternalMatchResult {
   awayScore: number;
 }
 
-/** Simule une journée de championnat et les coupes programmées. */
+/** Vrai si au moins un match de coupe est programmé cette semaine. */
+export function isCupWeek(cupFixtures: CupFixture[], week: number, season: number): boolean {
+  return cupFixtures.some(
+    (f) => f.week === week && f.season === season && f.status === 'pending',
+  );
+}
+
+/** Match de coupe programmé impliquant un club donné cette semaine. */
+export function getCupFixtureForClub(
+  cupFixtures: CupFixture[],
+  clubId: string,
+  week: number,
+  season: number,
+): CupFixture | undefined {
+  return cupFixtures.find(
+    (f) =>
+      f.week === week &&
+      f.season === season &&
+      f.status === 'pending' &&
+      (f.homeClubId === clubId || f.awayClubId === clubId),
+  );
+}
+
+function pairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/** Prochaine semaine de coupe hors mercato (le championnat y sera suspendu). */
+function nextCupRoundWeek(week: number, step: number): number {
+  let candidate = week + step;
+  while (candidate <= 52 && !isLeagueMatchWeek(candidate)) {
+    candidate++;
+  }
+  return Math.min(candidate, 52);
+}
+
+/**
+ * Simule une journée : coupes prioritaires (pas de championnat les semaines
+ * de coupe), résultats des matchs clients intégrés.
+ */
 export function simulateCompetitionWeek(
   week: number,
   season: number,
@@ -303,9 +347,28 @@ export function simulateCompetitionWeek(
   let nextTrophies = [...trophies];
 
   const clubMap = new Map(clubs.map((c) => [c.id, c]));
+
+  const cupsThisWeek = nextCupFixtures.filter(
+    (f) => f.season === season && f.week === week && f.status === 'pending',
+  );
+  const cupWeek = cupsThisWeek.length > 0;
+  const cupPairs = new Set(cupsThisWeek.map((f) => pairKey(f.homeClubId, f.awayClubId)));
+
+  // Sépare les résultats clients : coupe vs championnat.
+  const cupExternals = new Map<string, ExternalMatchResult>();
+  const leagueExternals: ExternalMatchResult[] = [];
+  for (const ext of externalResults) {
+    const key = pairKey(ext.homeClubId, ext.awayClubId);
+    if (cupPairs.has(key)) {
+      cupExternals.set(key, ext);
+    } else {
+      leagueExternals.push(ext);
+    }
+  }
+
   const externallyPlayed = new Set<string>();
 
-  for (const ext of externalResults) {
+  for (const ext of leagueExternals) {
     externallyPlayed.add(ext.homeClubId);
     externallyPlayed.add(ext.awayClubId);
 
@@ -332,52 +395,57 @@ export function simulateCompetitionWeek(
     });
   }
 
-  for (const comp of competitions.filter((c) => c.type === 'league')) {
-    const league = leagues.find((l) => l.id === comp.leagueId);
-    if (!league) continue;
+  // Les semaines de coupe suspendent le championnat.
+  if (!cupWeek) {
+    for (const comp of competitions.filter((c) => c.type === 'league')) {
+      const league = leagues.find((l) => l.id === comp.leagueId);
+      if (!league) continue;
 
-    const compStandings = nextStandings.filter((s) => s.competitionId === comp.id);
-    const clubIds = compStandings
-      .map((s) => s.clubId)
-      .filter((id) => !externallyPlayed.has(id));
-    const pairs = pairLeagueRound(clubIds, week);
+      const compStandings = nextStandings.filter((s) => s.competitionId === comp.id);
+      const clubIds = compStandings
+        .map((s) => s.clubId)
+        .filter((id) => !externallyPlayed.has(id));
+      const pairs = pairLeagueRound(clubIds, week);
 
-    for (const [homeId, awayId] of pairs) {
-      const home = clubMap.get(homeId);
-      const away = clubMap.get(awayId);
-      if (!home || !away) continue;
+      for (const [homeId, awayId] of pairs) {
+        const home = clubMap.get(homeId);
+        const away = clubMap.get(awayId);
+        if (!home || !away) continue;
 
-      const score = simulateQuickScore(home.reputation, away.reputation);
-      results.push({
-        id: `res-${comp.id}-w${week}-${homeId}`,
-        competitionId: comp.id,
-        week,
-        season,
-        homeClubId: homeId,
-        awayClubId: awayId,
-        homeScore: score.home,
-        awayScore: score.away,
-      });
+        const score = simulateQuickScore(home.reputation, away.reputation);
+        results.push({
+          id: `res-${comp.id}-w${week}-${homeId}`,
+          competitionId: comp.id,
+          week,
+          season,
+          homeClubId: homeId,
+          awayClubId: awayId,
+          homeScore: score.home,
+          awayScore: score.away,
+        });
 
-      nextStandings = nextStandings.map((s) => {
-        if (s.competitionId !== comp.id) return s;
-        if (s.clubId === homeId) return applyResult(s, score.home, score.away);
-        if (s.clubId === awayId) return applyResult(s, score.away, score.home);
-        return s;
-      });
+        nextStandings = nextStandings.map((s) => {
+          if (s.competitionId !== comp.id) return s;
+          if (s.clubId === homeId) return applyResult(s, score.home, score.away);
+          if (s.clubId === awayId) return applyResult(s, score.away, score.home);
+          return s;
+        });
+      }
     }
   }
-
-  const cupsThisWeek = nextCupFixtures.filter(
-    (f) => f.season === season && f.week === week && f.status === 'pending',
-  );
 
   for (const fixture of cupsThisWeek) {
     const home = clubMap.get(fixture.homeClubId);
     const away = clubMap.get(fixture.awayClubId);
     if (!home || !away) continue;
 
-    const score = simulateQuickScore(home.reputation, away.reputation);
+    // Résultat du match client si l'utilisateur y a assisté, sinon simulation.
+    const external = cupExternals.get(pairKey(fixture.homeClubId, fixture.awayClubId));
+    const score = external
+      ? external.homeClubId === fixture.homeClubId
+        ? { home: external.homeScore, away: external.awayScore }
+        : { home: external.awayScore, away: external.homeScore }
+      : simulateQuickScore(home.reputation, away.reputation);
     const homeWins = score.home > score.away || (score.home === score.away && Math.random() > 0.5);
     const winner = homeWins ? home : away;
 
@@ -422,7 +490,7 @@ export function simulateCompetitionWeek(
     const nextRound = fixture.round + 1;
     const roundLabels = ['', 'Huitièmes', 'Quarts', 'Demi-finales', 'Finale'];
     const label = roundLabels[nextRound] ?? `Tour ${nextRound}`;
-    const nextWeek = week + (comp.type === 'continental' ? 6 : 4);
+    const nextWeek = nextCupRoundWeek(week, comp.type === 'continental' ? 6 : 4);
 
     if (winners.length === 2) {
       nextCupFixtures.push({

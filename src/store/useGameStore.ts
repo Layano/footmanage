@@ -36,7 +36,9 @@ import {
 import { getTransferWindowLabel, isLeagueMatchWeek, normalizeLeagueTransferWindows } from '@/engine/simulation/transferWindow';
 import {
   buildCountryCompetitions,
+  getCupFixtureForClub,
   initializeCompetitions,
+  isCupWeek,
   simulateCompetitionWeek,
 } from '@/engine/simulation/competitionEngine';
 import { migrateLegacyWage } from '@/engine/simulation/salaryEngine';
@@ -724,6 +726,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return { success: false, reason: 'Ce joueur ne peut pas être signé.' };
     }
 
+    if (player.status === 'injured') {
+      return { success: false, reason: 'Ce joueur est blessé — attendez sa guérison.' };
+    }
+
     const evaluation = evaluateNegotiation(player, offer, state.agency.reputation);
     if (!evaluation.accepted) {
       return { success: false, reason: evaluation.feedback };
@@ -1122,7 +1128,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const newMessages: GameMessage[] = [];
 
     let myPlayers = evolveAllPlayers(state.myPlayers);
-    let scoutedPlayers = evolveAllPlayers(state.scoutedPlayers);
+    let scoutedPlayers = evolveAllPlayers(state.scoutedPlayers).map((p) =>
+      p.status === 'injured' && Math.random() < GAME_CONFIG.INJURY_RECOVERY_CHANCE
+        ? { ...p, status: 'free_agent' as const }
+        : p,
+    );
     let worldPlayers = evolveAllPlayers(state.worldPlayers);
 
     const staleMatches = resolveStaleMatchFixtures(
@@ -1165,9 +1175,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let cupFixtures = state.cupFixtures;
     let trophies = state.trophies;
 
-    // Simule la journée de la semaine écoulée, en intégrant les matchs clients
-    // (assistés ou auto-simulés) dans les classements.
-    if (isLeagueMatchWeek(state.currentWeek) && competitions.length > 0) {
+    // Simule la journée de la semaine écoulée (championnat ou coupe), en
+    // intégrant les matchs clients (assistés ou auto-simulés).
+    const currentWeekHasCup = isCupWeek(
+      state.cupFixtures,
+      state.currentWeek,
+      state.currentSeason,
+    );
+    if (
+      (isLeagueMatchWeek(state.currentWeek) || currentWeekHasCup) &&
+      competitions.length > 0
+    ) {
       const clientResults = matchFixtures
         .filter(
           (f) =>
@@ -1213,7 +1231,51 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
 
     let matchFixturesForWeek = [...matchFixtures];
-    if (isLeagueMatchWeek(nextWeek)) {
+    const nextWeekIsCupWeek = isCupWeek(cupFixtures, nextWeek, nextSeason);
+
+    if (nextWeekIsCupWeek) {
+      // Semaine de coupe : seuls les clients dont le club joue la coupe ont un match.
+      for (const client of myPlayers) {
+        if (!client.contract.clubId) continue;
+        const cupMatch = getCupFixtureForClub(
+          cupFixtures,
+          client.contract.clubId,
+          nextWeek,
+          nextSeason,
+        );
+        if (!cupMatch) continue;
+
+        const fixtureId = `match-cup-${nextSeason}-${nextWeek}-${client.id}`;
+        if (matchFixturesForWeek.some((m) => m.id === fixtureId)) continue;
+
+        const home = state.clubs.find((c) => c.id === cupMatch.homeClubId);
+        const away = state.clubs.find((c) => c.id === cupMatch.awayClubId);
+        if (!home || !away) continue;
+
+        matchFixturesForWeek.push({
+          id: fixtureId,
+          homeClubId: cupMatch.homeClubId,
+          awayClubId: cupMatch.awayClubId,
+          week: nextWeek,
+          season: nextSeason,
+          clientPlayerId: client.id,
+          status: 'scheduled',
+        });
+        newMessages.push({
+          id: `msg-match-${fixtureId}`,
+          type: 'match',
+          title: `🏆 ${cupMatch.roundLabel} — ${home.shortName} vs ${away.shortName}`,
+          body: `${client.displayName} joue un match de coupe avec ${home.id === client.contract.clubId ? home.name : away.name}. Assistez au match ou il sera simulé.`,
+          week: nextWeek,
+          season: nextSeason,
+          createdAt: new Date().toISOString(),
+          read: false,
+          playerId: client.id,
+          action: 'match_invite',
+          matchId: fixtureId,
+        });
+      }
+    } else if (isLeagueMatchWeek(nextWeek)) {
       for (const client of myPlayers) {
         if (!client.contract.clubId) continue;
         const fixture = createMatchInvite(client, state.clubs, worldPlayers, nextWeek, nextSeason);

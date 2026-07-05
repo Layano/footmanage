@@ -132,10 +132,18 @@ export function simulateMatch(
 ): MatchResult {
   const homeStr = teamStrength(homeSquad);
   const awayStr = teamStrength(awaySquad);
-  // Espérance de buts par équipe (~1 à 2), avantage domicile inclus.
-  const strDiff = (homeStr - awayStr) / 25;
-  const homeLambda = clamp(1.45 + strDiff, 0.3, 3);
-  const awayLambda = clamp(1.15 - strDiff, 0.25, 2.8);
+  // Espérance de buts selon la force relative — un grand écart fait exploser le score.
+  const strDiff = homeStr - awayStr;
+  const homeLambda = clamp(
+    1.4 + Math.max(0, strDiff) * 0.055 - Math.max(0, -strDiff) * 0.02,
+    0.2,
+    5.5,
+  );
+  const awayLambda = clamp(
+    1.15 + Math.max(0, -strDiff) * 0.055 - Math.max(0, strDiff) * 0.02,
+    0.15,
+    5.2,
+  );
 
   let homeScore = 0;
   let awayScore = 0;

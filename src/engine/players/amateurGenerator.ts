@@ -15,34 +15,37 @@ function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function randomStat(): number {
-  return randomInt(GAME_CONFIG.AMATEUR_STAT_MIN, GAME_CONFIG.AMATEUR_STAT_MAX);
+function randomStat(min: number, max: number): number {
+  return randomInt(min, max);
 }
 
-function buildAmateurAttributes(): OutfieldPlayerAttributes {
+/** Les stats plafonnent selon l'âge : à 15 ans on est loin du niveau d'un 17 ans. */
+function buildAmateurAttributes(age: number): OutfieldPlayerAttributes {
+  const min = GAME_CONFIG.AMATEUR_STAT_MIN;
+  const max = Math.max(min + 1, GAME_CONFIG.AMATEUR_STAT_MAX - (17 - age));
   return {
     physical: {
-      speed: randomStat(),
-      acceleration: randomStat(),
-      endurance: randomStat(),
-      strength: randomStat(),
-      agility: randomStat(),
+      speed: randomStat(min, max),
+      acceleration: randomStat(min, max),
+      endurance: randomStat(min, max),
+      strength: randomStat(min, max),
+      agility: randomStat(min, max),
     },
     technical: {
-      shooting: randomStat(),
-      passing: randomStat(),
-      dribbling: randomStat(),
-      control: randomStat(),
-      crossing: randomStat(),
-      tackling: randomStat(),
-      marking: randomStat(),
+      shooting: randomStat(min, max),
+      passing: randomStat(min, max),
+      dribbling: randomStat(min, max),
+      control: randomStat(min, max),
+      crossing: randomStat(min, max),
+      tackling: randomStat(min, max),
+      marking: randomStat(min, max),
     },
     mental: {
-      determination: randomStat(),
-      vision: randomStat(),
-      composure: randomStat(),
-      positioning: randomStat(),
-      workRate: randomStat(),
+      determination: randomStat(min, max),
+      vision: randomStat(min, max),
+      composure: randomStat(min, max),
+      positioning: randomStat(min, max),
+      workRate: randomStat(min, max),
     },
   };
 }
@@ -74,8 +77,10 @@ export function generateNeighborhoodAmateurs(
     const { firstName, lastName } = pickAmateurName(countryCode);
     const position = POSITIONS[randomInt(0, POSITIONS.length - 1)];
     const age = randomInt(15, 17);
-    const attributes = buildAmateurAttributes();
+    const attributes = buildAmateurAttributes(age);
     const overallRating = calculateOverallRating(position, attributes);
+    // Blessure rare contractée pendant le tournoi de quartier.
+    const isInjured = Math.random() < GAME_CONFIG.NEIGHBORHOOD_INJURY_CHANCE;
 
     const isGem = index === gemIndex;
     const gemPotentialDisplay = randomInt(
@@ -114,7 +119,7 @@ export function generateNeighborhoodAmateurs(
         startDate: `${season}-01-01`,
         endDate: `${season}-12-31`,
       },
-      status: 'free_agent',
+      status: isInjured ? 'injured' : 'free_agent',
       isClient: false,
       morale: randomInt(70, 90),
       form: randomInt(60, 75),

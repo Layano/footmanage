@@ -190,6 +190,7 @@ function CupSection({
   competitions: Competition[];
   cupFixtures: ReturnType<typeof useGameStore.getState>['cupFixtures'];
 }) {
+  const router = useRouter();
   if (competitions.length === 0) return null;
 
   return (
@@ -198,17 +199,24 @@ function CupSection({
       {competitions.map((comp) => {
         const fixtures = cupFixtures.filter((f) => f.competitionId === comp.id);
         const pending = fixtures.filter((f) => f.status === 'pending');
-        const played = fixtures.filter((f) => f.status === 'played').slice(-4);
+        const played = fixtures.filter((f) => f.status === 'played').slice(-3);
 
         return (
-          <View key={comp.id} style={styles.cupBlock}>
-            <Text style={styles.cupName}>{comp.name}</Text>
+          <Pressable
+            key={comp.id}
+            style={styles.cupBlock}
+            onPress={() => router.push(`/cup/${comp.id}`)}>
+            <View style={styles.cupHeader}>
+              <Text style={styles.cupName}>🏆 {comp.name}</Text>
+              <Text style={styles.cupLink}>Tableau →</Text>
+            </View>
             {pending.length > 0 ? (
               <Text style={styles.cupMeta}>
-                Prochain tour : {pending[0]!.roundLabel} (S{pending[0]!.week})
+                Prochain tour : {pending[0]!.roundLabel} (S{pending[0]!.week}) — le championnat
+                est suspendu cette semaine-là
               </Text>
             ) : (
-              <Text style={styles.cupMeta}>Saison en cours</Text>
+              <Text style={styles.cupMeta}>Compétition terminée</Text>
             )}
             {played.map((f) => {
               const home = getClubFromStore(f.homeClubId);
@@ -220,7 +228,7 @@ function CupSection({
                 </Text>
               );
             })}
-          </View>
+          </Pressable>
         );
       })}
     </View>
@@ -350,6 +358,16 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.sm,
     borderWidth: 1,
     borderColor: theme.colors.border,
+  },
+  cupHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cupLink: {
+    fontSize: 13,
+    color: theme.colors.primary,
+    fontWeight: '600',
   },
   cupName: {
     fontSize: 15,
