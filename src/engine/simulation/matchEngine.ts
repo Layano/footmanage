@@ -6,6 +6,7 @@ import type { Club } from '@/types/club';
 import type { GameMessage } from '@/types/game';
 import type { MatchEvent, MatchFixture, MatchResult, MatchScoutProfile, PlayerMatchStat } from '@/types/match';
 import type { Player } from '@/types/player';
+import type { PlayerPosition } from '@/types/positions';
 import { isGoalkeeper } from '@/types/player';
 import { buildMatchScoutProfiles } from './matchScouting';
 
@@ -57,6 +58,44 @@ function assignMinutes(
     }
   }
   return minutes;
+}
+
+function pickWeighted<T>(items: T[], weights: number[]): T | null {
+  if (items.length === 0) return null;
+  const total = weights.reduce((s, w) => s + w, 0);
+  if (total <= 0) return items[randomInt(0, items.length - 1)]!;
+  let roll = Math.random() * total;
+  for (let i = 0; i < items.length; i++) {
+    roll -= weights[i]!;
+    if (roll <= 0) return items[i]!;
+  }
+  return items[items.length - 1]!;
+}
+
+function goalScorerWeight(position: PlayerPosition): number {
+  switch (position) {
+    case 'ST':
+      return 6;
+    case 'WING':
+      return 4.5;
+    case 'AM':
+      return 3;
+    case 'DM':
+      return 1.2;
+    case 'FB':
+      return 1;
+    case 'CB':
+      return 0.7;
+    default:
+      return 1;
+  }
+}
+
+function pickGoalScorer(squad: Player[], minutesMap: Map<string, number>): Player | null {
+  const eligible = squad.filter((p) => (minutesMap.get(p.id) ?? 0) > 0 && !isGoalkeeper(p));
+  if (eligible.length === 0) return null;
+  const weights = eligible.map((p) => goalScorerWeight(p.position) * (1 + (minutesMap.get(p.id) ?? 0) / 90));
+  return pickWeighted(eligible, weights);
 }
 
 function buildPlayerStats(
@@ -136,8 +175,7 @@ export function simulateMatch(
 
     if (Math.random() < goalChanceHome) {
       homeScore++;
-      const scorers = homeSquad.filter((p) => (homeMinutes.get(p.id) ?? 0) > 0 && !isGoalkeeper(p));
-      const scorer = scorers[randomInt(0, Math.max(0, scorers.length - 1))];
+      const scorer = pickGoalScorer(homeSquad, homeMinutes);
       if (scorer) {
         homeGoals.set(scorer.id, (homeGoals.get(scorer.id) ?? 0) + 1);
         events.push({
@@ -148,11 +186,17 @@ export function simulateMatch(
           playerName: scorer.displayName,
           text: `⚽ ${min}' — But de ${scorer.displayName} (${homeClub.shortName}) !`,
         });
+      } else {
+        events.push({
+          minute: min,
+          type: 'goal',
+          teamSide: 'home',
+          text: `⚽ ${min}' — But pour ${homeClub.shortName} !`,
+        });
       }
     } else if (Math.random() < goalChanceAway) {
       awayScore++;
-      const scorers = awaySquad.filter((p) => (awayMinutes.get(p.id) ?? 0) > 0 && !isGoalkeeper(p));
-      const scorer = scorers[randomInt(0, Math.max(0, scorers.length - 1))];
+      const scorer = pickGoalScorer(awaySquad, awayMinutes);
       if (scorer) {
         awayGoals.set(scorer.id, (awayGoals.get(scorer.id) ?? 0) + 1);
         events.push({
@@ -162,6 +206,13 @@ export function simulateMatch(
           playerId: scorer.id,
           playerName: scorer.displayName,
           text: `⚽ ${min}' — But de ${scorer.displayName} (${awayClub.shortName}) !`,
+        });
+      } else {
+        events.push({
+          minute: min,
+          type: 'goal',
+          teamSide: 'away',
+          text: `⚽ ${min}' — But pour ${awayClub.shortName} !`,
         });
       }
     } else if (Math.random() < 0.04) {

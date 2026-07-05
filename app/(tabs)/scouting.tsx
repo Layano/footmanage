@@ -5,6 +5,7 @@ import {
   Alert,
   FlatList,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -13,7 +14,8 @@ import {
 import { SigningNegotiationPanel } from '@/components/negotiation/SigningNegotiationPanel';
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { theme } from '@/constants/theme';
-import { getCountryByCode } from '@/data/world/countries';
+import { FOOTBALL_COUNTRIES, getCountryByCode } from '@/data/world/countries';
+import { getUnlockCost, getUnlockReputationRequired } from '@/engine/world/countryUnlock';
 import { isNeighborhoodAmateur } from '@/engine/players/amateurGenerator';
 import { estimatePotential, overallToDisplay } from '@/engine/players/potentialEstimate';
 import { getClubFromStore, getWorldMarketPlayers, useGameStore } from '@/store/useGameStore';
@@ -33,12 +35,15 @@ export default function ScoutingScreen() {
   const scoutNeighborhoodTournament = useGameStore((s) => s.scoutNeighborhoodTournament);
   const signAmateurPlayer = useGameStore((s) => s.signAmateurPlayer);
   const setTutorialStep = useGameStore((s) => s.setTutorialStep);
+  const unlockCountry = useGameStore((s) => s.unlockCountry);
+  const unlockedCountryCodes = useGameStore((s) => s.unlockedCountryCodes);
   const agencyCountryCode = useGameStore((s) => s.agencyCountryCode);
   const agencyReputation = useGameStore((s) => s.agency.reputation);
   const currentTournament = useGameStore((s) => s.currentTournament);
   const agencyCity = useGameStore((s) => s.agency.office.city);
 
-  const [view, setView] = useState<'local' | 'market'>('local');
+  const [view, setView] = useState<'local' | 'market' | 'unlock'>('local');
+  const [marketCountry, setMarketCountry] = useState(agencyCountryCode);
   const [negotiatingPlayer, setNegotiatingPlayer] = useState<Player | null>(null);
 
   const countryName = getCountryByCode(agencyCountryCode)?.name ?? agencyCountryCode;
@@ -46,8 +51,16 @@ export default function ScoutingScreen() {
   const tournamentCity = currentTournament?.city ?? '—';
 
   const marketPlayers = useMemo(
-    () => getWorldMarketPlayers(agencyCountryCode).slice(0, 40),
-    [agencyCountryCode, scoutedPlayers.length],
+    () => getWorldMarketPlayers(marketCountry).slice(0, 40),
+    [marketCountry, scoutedPlayers.length, unlockedCountryCodes.length],
+  );
+
+  const lockedCountries = useMemo(
+    () =>
+      FOOTBALL_COUNTRIES.filter(
+        (c) => c.code !== agencyCountryCode && !unlockedCountryCodes.includes(c.code),
+      ),
+    [agencyCountryCode, unlockedCountryCodes],
   );
 
   const displayPlayers = view === 'local' ? scoutedPlayers : marketPlayers;
@@ -111,17 +124,93 @@ export default function ScoutingScreen() {
           style={[styles.tab, view === 'market' && styles.tabActive]}
           onPress={() => setView('market')}>
           <Text style={[styles.tabText, view === 'market' && styles.tabTextActive]}>
-            Marché national
+            Marché
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.tab, view === 'unlock' && styles.tabActive]}
+          onPress={() => setView('unlock')}>
+          <Text style={[styles.tabText, view === 'unlock' && styles.tabTextActive]}>
+            Pays
           </Text>
         </Pressable>
       </View>
 
-      {displayPlayers.length === 0 ? (
+      {view === 'market' && unlockedCountryCodes.length > 1 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.countryRow}>
+          {unlockedCountryCodes.map((code) => {
+            const c = getCountryByCode(code);
+            if (!c) return null;
+            return (
+              <Pressable
+                key={code}
+                style={[styles.countryChip, marketCountry === code && styles.countryChipActive]}
+                onPress={() => setMarketCountry(code)}>
+                <Text
+                  style={[
+                    styles.countryChipText,
+                    marketCountry === code && styles.countryChipTextActive,
+                  ]}>
+                  {c.flag} {c.name}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+
+      {view === 'unlock' ? (
+        <View style={styles.unlockList}>
+          <Text style={styles.unlockHint}>
+            Seul votre pays d'origine est actif au départ. Débloquez de nouveaux marchés pour
+            générer championnats, clubs et effectifs équilibrés.
+          </Text>
+          {lockedCountries.map((country) => {
+            const cost = getUnlockCost(country, unlockedCountryCodes.length);
+            const repReq = getUnlockReputationRequired(country);
+            const canAfford = agencyBudget >= cost;
+            const hasRep = agencyReputation >= repReq;
+
+            return (
+              <View key={country.code} style={styles.unlockCard}>
+                <Text style={styles.unlockName}>
+                  {country.flag} {country.name}
+                </Text>
+                <Text style={styles.unlockMeta}>
+                  {cost.toLocaleString('fr-FR')} € · Réputation {repReq}+
+                </Text>
+                <Pressable
+                  style={[
+                    styles.unlockBtn,
+                    (!canAfford || !hasRep) && styles.unlockBtnDisabled,
+                  ]}
+                  onPress={() => {
+                    void unlockCountry(country.code).then((result) => {
+                      if (result.success) {
+                        Alert.alert('Marché débloqué', `${country.name} est maintenant accessible.`);
+                      } else {
+                        Alert.alert('Déblocage impossible', result.reason ?? 'Erreur.');
+                      }
+                    });
+                  }}
+                  disabled={!canAfford || !hasRep}>
+                  <Text style={styles.unlockBtnText}>Débloquer</Text>
+                </Pressable>
+              </View>
+            );
+          })}
+          {lockedCountries.length === 0 ? (
+            <Text style={styles.emptyText}>Tous les pays sont débloqués !</Text>
+          ) : null}
+        </View>
+      ) : displayPlayers.length === 0 ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyText}>
             {view === 'local'
               ? `Aucun prospect local. Rendez-vous au tournoi de ${tournamentCity}.`
-              : 'Aucun joueur disponible sur le marché national pour le moment.'}
+              : view === 'market'
+                ? `Aucun joueur disponible sur le marché ${getCountryByCode(marketCountry)?.name ?? ''}.`
+                : 'Aucun joueur disponible.'}
           </Text>
         </View>
       ) : (
@@ -354,6 +443,78 @@ const styles = StyleSheet.create({
   signButtonText: {
     fontSize: 14,
     fontWeight: '600',
+    color: theme.colors.text,
+  },
+  countryRow: {
+    marginBottom: theme.spacing.md,
+  },
+  countryChip: {
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    marginRight: theme.spacing.sm,
+    backgroundColor: theme.colors.surface,
+  },
+  countryChipActive: {
+    borderColor: theme.colors.primary,
+    backgroundColor: theme.colors.surfaceLight,
+  },
+  countryChipText: {
+    fontSize: 13,
+    color: theme.colors.textMuted,
+  },
+  countryChipTextActive: {
+    color: theme.colors.primary,
+    fontWeight: '600',
+  },
+  unlockList: {
+    gap: theme.spacing.sm,
+    paddingBottom: theme.spacing.lg,
+  },
+  unlockHint: {
+    fontSize: 14,
+    color: theme.colors.textMuted,
+    lineHeight: 20,
+    marginBottom: theme.spacing.sm,
+  },
+  unlockCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    padding: theme.spacing.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: theme.spacing.sm,
+  },
+  unlockName: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '600',
+    color: theme.colors.text,
+    minWidth: '50%',
+  },
+  unlockMeta: {
+    fontSize: 13,
+    color: theme.colors.textMuted,
+    width: '100%',
+  },
+  unlockBtn: {
+    backgroundColor: theme.colors.primary,
+    borderRadius: 8,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    marginLeft: 'auto',
+  },
+  unlockBtnDisabled: {
+    opacity: 0.45,
+  },
+  unlockBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
     color: theme.colors.text,
   },
 });

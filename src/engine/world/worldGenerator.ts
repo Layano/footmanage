@@ -1,5 +1,4 @@
 import {
-  FOOTBALL_COUNTRIES,
   getCountryByCode,
   getLeagueTiersForCountry,
   LEAGUE_TIER_LABELS,
@@ -11,7 +10,7 @@ import {
   INSPIRED_CLUBS,
   type InspiredClubTemplate,
 } from '@/data/world/majorLeagueData';
-import { generateLitePoolForClub, generateSquadForClub } from '@/engine/world/squadGenerator';
+import { generateSquadForClub } from '@/engine/world/squadGenerator';
 import type { Club } from '@/types/club';
 import type { League } from '@/types/league';
 import type { Player } from '@/types/player';
@@ -136,50 +135,64 @@ function generateClubsForLeague(countryCode: string, league: League): Club[] {
 }
 
 export interface BuildWorldOptions {
-  /** Pays d'origine de l'agence — génération complète des effectifs. */
-  agencyCountryCode: string;
-  /** Générer des joueurs pour les autres pays (pool mercato). */
-  includeForeignLitePool?: boolean;
+  /** Pays dont les championnats sont actifs. */
+  countryCodes: string[];
 }
 
-/**
- * Construit la base de données mondiale :
- * - Tous les pays : ligues + clubs
- * - Pays d'origine : effectifs complets
- * - Autres pays (optionnel) : 5 joueurs/club en D1
- */
-export function buildWorldDatabase(options: BuildWorldOptions): GeneratedWorld {
-  const { agencyCountryCode, includeForeignLitePool = true } = options;
+/** Génère ligues, clubs et joueurs pour un seul pays. */
+export function generateCountryFootball(countryCode: string): GeneratedWorld {
+  const country = getCountryByCode(countryCode);
+  if (!country) {
+    return { leagues: [], clubs: [], players: [] };
+  }
+
   const leagues: League[] = [];
   const clubs: Club[] = [];
   const players: Player[] = [];
+  const tiers = getLeagueTiersForCountry(country.tier);
 
-  for (const country of FOOTBALL_COUNTRIES) {
-    const tiers = getLeagueTiersForCountry(country.tier);
+  for (const tier of tiers) {
+    const league = createLeague(country.code, country.name, tier);
+    leagues.push(league);
 
-    for (const tier of tiers) {
-      const league = createLeague(country.code, country.name, tier);
-      leagues.push(league);
+    const leagueClubs = generateClubsForLeague(country.code, league);
+    const sortedByRep = [...leagueClubs].sort((a, b) => b.reputation - a.reputation);
 
-      const leagueClubs = generateClubsForLeague(country.code, league);
-      clubs.push(...leagueClubs);
+    for (let clubIndex = 0; clubIndex < leagueClubs.length; clubIndex++) {
+      const club = leagueClubs[clubIndex]!;
+      clubs.push(club);
 
-      const isAgencyCountry = country.code === agencyCountryCode;
-      const isForeignTop = includeForeignLitePool && country.code !== agencyCountryCode && tier === 'pro_1';
-
-      for (const club of leagueClubs) {
-        if (isAgencyCountry) {
-          const squad = generateSquadForClub(club, league, country.name, tier === 'junior' ? 12 : 20);
-          players.push(...squad);
-        } else if (isForeignTop) {
-          const lite = generateLitePoolForClub(club, league, country.name, 5);
-          players.push(...lite);
-        }
-      }
+      const rank = sortedByRep.findIndex((c) => c.id === club.id);
+      const squadSize = tier === 'junior' ? 12 : 20;
+      const squad = generateSquadForClub(club, league, country.name, squadSize, rank, leagueClubs.length);
+      players.push(...squad);
     }
   }
 
   return { leagues, clubs, players };
+}
+
+/**
+ * Construit le monde pour les pays débloqués uniquement.
+ */
+export function buildWorldForCountries(countryCodes: string[]): GeneratedWorld {
+  const leagues: League[] = [];
+  const clubs: Club[] = [];
+  const players: Player[] = [];
+
+  for (const code of countryCodes) {
+    const chunk = generateCountryFootball(code);
+    leagues.push(...chunk.leagues);
+    clubs.push(...chunk.clubs);
+    players.push(...chunk.players);
+  }
+
+  return { leagues, clubs, players };
+}
+
+/** @deprecated Utiliser buildWorldForCountries */
+export function buildWorldDatabase(options: { agencyCountryCode: string }): GeneratedWorld {
+  return buildWorldForCountries([options.agencyCountryCode]);
 }
 
 /** Tous les joueurs non-clients disponibles au mercato. */

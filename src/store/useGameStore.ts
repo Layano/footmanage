@@ -9,7 +9,9 @@ import {
 } from '@/engine/negotiation/amateurNegotiation';
 import { generateNeighborhoodAmateurs } from '@/engine/players/amateurGenerator';
 import { buildTournamentForWeek } from '@/engine/scouting/tournamentEngine';
-import { buildWorldDatabase } from '@/engine/world/worldGenerator';
+import { buildWorldForCountries, generateCountryFootball } from '@/engine/world/worldGenerator';
+import { runAcademyIntake } from '@/engine/world/academyEngine';
+import { canUnlockCountry } from '@/engine/world/countryUnlock';
 import { processWeeklyEconomy } from '@/engine/simulation/economyEngine';
 import {
   applyMatchResultToPlayers,
@@ -86,6 +88,7 @@ export interface PersistedGameState {
   worldPlayers: Player[];
   gameMode: GameMode;
   agencyCountryCode: string;
+  unlockedCountryCodes: string[];
   hasActiveGame: boolean;
   currentTournament: NeighborhoodTournament | null;
   pendingOffers: ClubContractOffer[];
@@ -114,6 +117,7 @@ interface GameStore extends PersistedGameState {
   setTutorialStep: (step: number) => void;
   resetGame: () => Promise<void>;
   revealPlayerScouting: (playerId: string) => void;
+  unlockCountry: (countryCode: string) => Promise<{ success: boolean; reason?: string }>;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -174,6 +178,7 @@ function getEmptyShellState(): PersistedGameState {
     tutorialStep: 0,
     gameMode: 'career',
     agencyCountryCode: 'FRA',
+    unlockedCountryCodes: ['FRA'],
     hasActiveGame: false,
     currentTournament: null,
     pendingOffers: [],
@@ -207,14 +212,34 @@ function withPlayerDefaults(player: Player, clubs: Club[], leagues: League[]): P
   };
 }
 
+function filterWorldToUnlocked(
+  leagues: League[],
+  clubs: Club[],
+  players: Player[],
+  unlockedCountryCodes: string[],
+): { leagues: League[]; clubs: Club[]; players: Player[] } {
+  const unlocked = new Set(unlockedCountryCodes);
+  const filteredLeagues = leagues.filter((l) => unlocked.has(l.countryCode));
+  const leagueIds = new Set(filteredLeagues.map((l) => l.id));
+  const filteredClubs = clubs.filter(
+    (c) => unlocked.has(c.countryCode) && leagueIds.has(c.leagueId),
+  );
+  const clubIds = new Set(filteredClubs.map((c) => c.id));
+  const filteredPlayers = players.filter(
+    (p) => p.contract.clubId === null || clubIds.has(p.contract.clubId),
+  );
+  return { leagues: filteredLeagues, clubs: filteredClubs, players: filteredPlayers };
+}
+
 function buildFreshGameState(config: NewGameConfig): PersistedGameState {
   const country = getCountryByCode(config.countryCode) ?? getCountryByCode('FRA')!;
-  const world = buildWorldDatabase({ agencyCountryCode: config.countryCode });
+  const unlockedCountryCodes = [config.countryCode];
+  const world = buildWorldForCountries(unlockedCountryCodes);
   const worldPlayers = ensureLeagueSquads(
     world.clubs,
     world.leagues,
     world.players,
-    config.countryCode,
+    unlockedCountryCodes,
   );
   const compInit = initializeCompetitions(
     2025,
@@ -254,6 +279,7 @@ function buildFreshGameState(config: NewGameConfig): PersistedGameState {
     tutorialStep: 1,
     gameMode: config.gameMode,
     agencyCountryCode: config.countryCode,
+    unlockedCountryCodes,
     hasActiveGame: true,
     currentTournament: createInitialTournament(
       1,
@@ -292,6 +318,7 @@ function toPersistedState(state: GameStore): PersistedGameState {
     worldPlayers: state.worldPlayers,
     gameMode: state.gameMode,
     agencyCountryCode: state.agencyCountryCode,
+    unlockedCountryCodes: state.unlockedCountryCodes,
     hasActiveGame: state.hasActiveGame,
     currentTournament: state.currentTournament,
     pendingOffers: state.pendingOffers,
@@ -332,10 +359,16 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
   }
 
   const defaults = getEmptyShellState();
-  const leagues = (saved.leagues ?? defaults.leagues).map(normalizeLeagueTransferWindows);
-  const clubs = saved.clubs ?? defaults.clubs;
   const agencyCountryCode = saved.agencyCountryCode ?? 'FRA';
+  const unlockedCountryCodes = saved.unlockedCountryCodes ?? [agencyCountryCode];
   const currentSeason = saved.currentSeason ?? 2025;
+
+  const rawLeagues = (saved.leagues ?? defaults.leagues).map(normalizeLeagueTransferWindows);
+  const rawClubs = saved.clubs ?? defaults.clubs;
+  const rawPlayers = saved.worldPlayers ?? defaults.worldPlayers;
+  const filtered = filterWorldToUnlocked(rawLeagues, rawClubs, rawPlayers, unlockedCountryCodes);
+  const leagues = filtered.leagues;
+  const clubs = filtered.clubs;
 
   let competitions = saved.competitions ?? [];
   let standings = saved.standings ?? [];
@@ -352,8 +385,8 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
   const worldPlayers = ensureLeagueSquads(
     clubs,
     leagues,
-    (saved.worldPlayers ?? defaults.worldPlayers).map(mapPlayer),
-    agencyCountryCode,
+    filtered.players.map(mapPlayer),
+    unlockedCountryCodes,
   );
 
   return {
@@ -365,6 +398,7 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
     tutorialStep: saved.tutorialStep ?? 0,
     gameMode: saved.gameMode ?? 'career',
     agencyCountryCode,
+    unlockedCountryCodes,
     hasActiveGame: saved.hasActiveGame ?? true,
     currentTournament:
       saved.currentTournament ??
@@ -551,6 +585,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   loadGame: async () => {
     try {
       let raw = await AsyncStorage.getItem(SAVE_GAME_KEY);
+      if (!raw) {
+        raw = await AsyncStorage.getItem('@footmanage/save-v8');
+      }
       if (!raw) {
         raw = await AsyncStorage.getItem('@footmanage/save-v7');
       }
@@ -987,6 +1024,63 @@ export const useGameStore = create<GameStore>((set, get) => ({
     void get().saveGame();
   },
 
+  unlockCountry: async (countryCode: string) => {
+    const state = get();
+    const country = getCountryByCode(countryCode);
+    if (!country) {
+      return { success: false, reason: 'Pays introuvable.' };
+    }
+
+    const check = canUnlockCountry(
+      country,
+      state.agencyCountryCode,
+      state.unlockedCountryCodes,
+      state.agencyBudget,
+      state.agency.reputation,
+    );
+    if (!check.allowed || check.cost == null) {
+      return { success: false, reason: check.reason ?? 'Déblocage impossible.' };
+    }
+
+    const chunk = generateCountryFootball(countryCode);
+    const nextUnlocked = [...state.unlockedCountryCodes, countryCode];
+    const nextLeagues = [...state.leagues, ...chunk.leagues];
+    const nextClubs = [...state.clubs, ...chunk.clubs];
+    const nextWorldPlayers = ensureLeagueSquads(
+      nextClubs,
+      nextLeagues,
+      [...state.worldPlayers, ...chunk.players],
+      nextUnlocked,
+    );
+
+    const newMessage: GameMessage = {
+      id: `msg-unlock-${countryCode}-${Date.now()}`,
+      type: 'scout',
+      title: `Marché débloqué — ${country.name}`,
+      body: `Championnats, clubs et effectifs générés pour ${country.name}. Coût : ${check.cost.toLocaleString('fr-FR')} €.`,
+      week: state.currentWeek,
+      season: state.currentSeason,
+      createdAt: new Date().toISOString(),
+      read: false,
+      action: 'none',
+    };
+
+    const nextState: PersistedGameState = {
+      ...state,
+      unlockedCountryCodes: nextUnlocked,
+      leagues: nextLeagues,
+      clubs: nextClubs,
+      worldPlayers: nextWorldPlayers,
+      agencyBudget: state.agencyBudget - check.cost,
+      totalExpenses: state.totalExpenses + check.cost,
+      messages: [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES),
+    };
+
+    set({ ...nextState, agency: syncAgency(nextState) });
+    await get().saveGame();
+    return { success: true };
+  },
+
   advanceTime: async () => {
     const state = get();
     let nextWeek = state.currentWeek + 1;
@@ -1100,6 +1194,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
       nextWeek = 1;
       nextSeason += 1;
 
+      const academy = runAcademyIntake(
+        state.clubs,
+        state.leagues,
+        worldPlayers,
+        state.unlockedCountryCodes,
+        nextSeason,
+      );
+      worldPlayers = academy.players;
+      for (const msg of academy.messages) {
+        newMessages.push({
+          id: `msg-academy-${nextSeason}-${Date.now()}`,
+          type: 'info',
+          title: 'Académies',
+          body: msg,
+          week: nextWeek,
+          season: nextSeason,
+          createdAt: new Date().toISOString(),
+          read: false,
+          action: 'none',
+        });
+      }
+
       const compInit = initializeCompetitions(
         nextSeason,
         state.leagues,
@@ -1198,10 +1314,12 @@ export function findPlayerById(playerId: string): { player: Player; source: Play
   return null;
 }
 
-/** Joueurs du marché mondial (hors clients et hors tournois locaux). */
-export function getWorldMarketPlayers(agencyCountryCode?: string): Player[] {
+/** Joueurs du marché pour un pays débloqué (hors clients et tournois locaux). */
+export function getWorldMarketPlayers(countryCode?: string): Player[] {
   const state = useGameStore.getState();
-  const code = agencyCountryCode ?? state.agencyCountryCode;
+  const code = countryCode ?? state.agencyCountryCode;
+  if (!state.unlockedCountryCodes.includes(code)) return [];
+
   const clientIds = new Set(state.myPlayers.map((p) => p.id));
   const scoutedIds = new Set(state.scoutedPlayers.map((p) => p.id));
 

@@ -55,8 +55,8 @@ export const GAME_CONFIG = {
   MATCH_DURATION_MS: 30_000,
 } as const;
 
-export const SAVE_GAME_VERSION = 8;
-export const SAVE_GAME_KEY = '@footmanage/save-v8';
+export const SAVE_GAME_VERSION = 9;
+export const SAVE_GAME_KEY = '@footmanage/save-v9';
 
 /** Anciennes clés — supprimées à la migration. */
 export const LEGACY_SAVE_KEYS = [
@@ -66,5 +66,5 @@ export const LEGACY_SAVE_KEYS = [
   '@footmanage/save-v4',
   '@footmanage/save-v5',
   '@footmanage/save-v6',
-  '@footmanage/save-v7',
+  '@footmanage/save-v8',
 ] as const;
