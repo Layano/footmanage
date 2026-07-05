@@ -1,19 +1,28 @@
 import { getCountryByCode } from '@/data/world/countries';
 
-/** Villes hôtes des tournois de quartier par pays. */
+/** Villes hôtes des tournois de quartier et noms de clubs par pays. */
 const COUNTRY_CITIES: Record<string, string[]> = {
-  FRA: ['Paris', 'Lyon', 'Marseille', 'Lille', 'Bordeaux', 'Toulouse', 'Nantes', 'Nice', 'Strasbourg', 'Montpellier'],
-  ENG: ['Londres', 'Manchester', 'Liverpool', 'Birmingham', 'Leeds', 'Newcastle', 'Brighton', 'Nottingham'],
-  ESP: ['Madrid', 'Barcelone', 'Séville', 'Valence', 'Bilbao', 'Malaga', 'Saragosse'],
-  GER: ['Berlin', 'Munich', 'Hambourg', 'Cologne', 'Francfort', 'Dortmund', 'Stuttgart'],
-  ITA: ['Milan', 'Rome', 'Turin', 'Naples', 'Florence', 'Bologne', 'Gênes'],
-  NED: ['Amsterdam', 'Rotterdam', 'Eindhoven', 'Utrecht', 'La Haye', 'Groningue'],
-  POR: ['Lisbonne', 'Porto', 'Braga', 'Coimbra', 'Faro'],
-  BEL: ['Bruxelles', 'Anvers', 'Gand', 'Liège', 'Charleroi'],
-  BRA: ['São Paulo', 'Rio de Janeiro', 'Belo Horizonte', 'Porto Alegre', 'Salvador', 'Recife'],
-  ARG: ['Buenos Aires', 'Córdoba', 'Rosario', 'Mendoza', 'La Plata'],
-  USA: ['New York', 'Los Angeles', 'Chicago', 'Miami', 'Dallas', 'Atlanta'],
-  MEX: ['Mexico', 'Guadalajara', 'Monterrey', 'Puebla', 'Tijuana'],
+  FRA: ['Paris', 'Lyon', 'Marseille', 'Lille', 'Bordeaux', 'Toulouse', 'Nantes', 'Nice', 'Strasbourg', 'Montpellier', 'Rennes', 'Reims'],
+  ENG: ['Londres', 'Manchester', 'Liverpool', 'Birmingham', 'Leeds', 'Newcastle', 'Brighton', 'Nottingham', 'Sheffield', 'Bristol'],
+  ESP: ['Madrid', 'Barcelone', 'Séville', 'Valence', 'Bilbao', 'Malaga', 'Saragosse', 'Grenade', 'Vigo', 'La Corogne'],
+  GER: ['Berlin', 'Munich', 'Hambourg', 'Cologne', 'Francfort', 'Dortmund', 'Stuttgart', 'Leipzig', 'Brême', 'Hanovre'],
+  ITA: ['Milan', 'Rome', 'Turin', 'Naples', 'Florence', 'Bologne', 'Gênes', 'Palerme', 'Vérone', 'Bari'],
+  NED: ['Amsterdam', 'Rotterdam', 'Eindhoven', 'Utrecht', 'La Haye', 'Groningue', 'Arnhem', 'Tilburg'],
+  POR: ['Lisbonne', 'Porto', 'Braga', 'Coimbra', 'Faro', 'Setúbal', 'Guimarães'],
+  BEL: ['Bruxelles', 'Anvers', 'Gand', 'Liège', 'Charleroi', 'Bruges', 'Louvain'],
+  TUR: ['Istanbul', 'Ankara', 'Izmir', 'Bursa', 'Antalya', 'Trabzon'],
+  BRA: ['São Paulo', 'Rio de Janeiro', 'Belo Horizonte', 'Porto Alegre', 'Salvador', 'Recife', 'Curitiba', 'Fortaleza'],
+  ARG: ['Buenos Aires', 'Córdoba', 'Rosario', 'Mendoza', 'La Plata', 'Tucumán'],
+  USA: ['New York', 'Los Angeles', 'Chicago', 'Miami', 'Dallas', 'Atlanta', 'Seattle', 'Boston'],
+  MEX: ['Mexico', 'Guadalajara', 'Monterrey', 'Puebla', 'Tijuana', 'León'],
+  RUS: ['Moscou', 'Saint-Pétersbourg', 'Kazan', 'Sotchi', 'Rostov'],
+  UKR: ['Kyiv', 'Lviv', 'Odessa', 'Kharkiv', 'Dnipro'],
+  MAR: ['Casablanca', 'Rabat', 'Marrakech', 'Fès', 'Tanger', 'Agadir'],
+  ALG: ['Alger', 'Oran', 'Constantine', 'Annaba', 'Sétif'],
+  SEN: ['Dakar', 'Thiès', 'Saint-Louis', 'Ziguinchor', 'Kaolack'],
+  CIV: ['Abidjan', 'Bouaké', 'Yamoussoukro', 'San-Pédro', 'Korhogo'],
+  JPN: ['Tokyo', 'Osaka', 'Yokohama', 'Nagoya', 'Sapporo', 'Kobe'],
+  KOR: ['Séoul', 'Busan', 'Incheon', 'Daegu', 'Suwon'],
 };
 
 function buildFallbackCities(defaultCity: string): string[] {
@@ -24,6 +33,8 @@ function buildFallbackCities(defaultCity: string): string[] {
     `${defaultCity} Est`,
     `${defaultCity} Ouest`,
     `Grand ${defaultCity}`,
+    `${defaultCity} Centre`,
+    `Vieux ${defaultCity}`,
   ];
 }
 

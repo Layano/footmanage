@@ -11,17 +11,12 @@ import {
   type InspiredClubTemplate,
 } from '@/data/world/majorLeagueData';
 import { generateSquadForClub } from '@/engine/world/squadGenerator';
+import { getCitiesForCountry } from '@/data/world/countryCities';
 import type { Club } from '@/types/club';
 import type { League } from '@/types/league';
 import type { Player } from '@/types/player';
 import type { GeneratedWorld } from '@/types/world';
 import type { LeagueTier } from '@/types/world';
-
-const PROCEDURAL_PREFIXES = ['FC', 'AS', 'SC', 'United', 'Athletic', 'Sporting', 'Real', 'Inter'];
-const PROCEDURAL_CITIES = [
-  'Nord', 'Sud', 'Est', 'Ouest', 'Central', 'Riverside', 'Highland', 'Coastal',
-  'Metro', 'Capital', 'Valley', 'Park', 'Town', 'City', 'Star', 'Victory',
-];
 
 function slugify(text: string): string {
   return text
@@ -58,15 +53,51 @@ function createLeague(countryCode: string, countryName: string, tier: LeagueTier
   };
 }
 
+const CLUB_PREFIXES = [
+  'FC', 'AS', 'SC', 'Real', 'Sporting', 'Racing',
+  'Olympique', 'Union', 'Atlético', 'Dynamo', 'Étoile', 'Inter',
+];
+
+/** Ordre des tiers pour décaler les noms et éviter les doublons entre divisions. */
+const TIER_NAME_OFFSET: Record<string, number> = {
+  pro_1: 0,
+  pro_2: 18,
+  pro_3: 36,
+  pro_4: 54,
+  pro_5: 72,
+  junior: 90,
+};
+
+/**
+ * Nom procédural unique : préfixe classique + vraie ville du pays.
+ * Les clubs juniors sont suffixés U16/U17.
+ */
+function buildProceduralClubName(
+  countryCode: string,
+  tier: LeagueTier,
+  nameIndex: number,
+): string {
+  const cities = getCitiesForCountry(countryCode);
+  const combos = cities.length * CLUB_PREFIXES.length;
+  // Pas co-premier avec le nombre de combinaisons pour entrelacer préfixes et villes.
+  const idx = (((TIER_NAME_OFFSET[tier] ?? 0) + nameIndex) * 13) % combos;
+  const prefix = CLUB_PREFIXES[idx % CLUB_PREFIXES.length]!;
+  const city = cities[Math.floor(idx / CLUB_PREFIXES.length) % cities.length]!;
+  const base = `${prefix} ${city}`;
+  if (tier === 'junior') {
+    return `${base} ${idx % 2 === 0 ? 'U17' : 'U16'}`;
+  }
+  return base;
+}
+
 function proceduralClub(
   countryCode: string,
   league: League,
   index: number,
   reputationBase: number,
+  nameIndex?: number,
 ): Club {
-  const city = PROCEDURAL_CITIES[index % PROCEDURAL_CITIES.length];
-  const prefix = PROCEDURAL_PREFIXES[index % PROCEDURAL_PREFIXES.length];
-  const name = `${prefix} ${city}`;
+  const name = buildProceduralClubName(countryCode, league.tier, nameIndex ?? index);
   const rep = clamp(reputationBase - index * 2, 20, 95);
   const id = `club-${countryCode.toLowerCase()}-${league.tier}-${index}`;
 
@@ -74,6 +105,7 @@ function proceduralClub(
     id,
     name,
     shortName: name
+      .replace(/ U1[67]$/, '')
       .split(' ')
       .map((w) => w[0])
       .join('')
@@ -123,9 +155,10 @@ function generateClubsForLeague(countryCode: string, league: League): Club[] {
 
   if (inspired && inspired.length > 0) {
     const clubs = inspired.map((t, i) => createClubFromTemplate(t, countryCode, league, i));
-    const remaining = targetCount - clubs.length;
+    const inspiredCount = clubs.length;
+    const remaining = targetCount - inspiredCount;
     for (let i = 0; i < remaining; i++) {
-      clubs.push(proceduralClub(countryCode, league, clubs.length + i, repBase - 10));
+      clubs.push(proceduralClub(countryCode, league, inspiredCount + i, repBase - 10));
     }
     return clubs;
   }
@@ -150,7 +183,15 @@ export function ensureLeagueClubs(
     const repBase = LEAGUE_TIER_REPUTATION[league.tier];
     const needed = target - existing.length;
     for (let i = 0; i < needed; i++) {
-      added.push(proceduralClub(league.countryCode, league, existing.length + i + 100, repBase - 8));
+      added.push(
+        proceduralClub(
+          league.countryCode,
+          league,
+          existing.length + i + 100,
+          repBase - 8,
+          existing.length + i,
+        ),
+      );
     }
   }
 
