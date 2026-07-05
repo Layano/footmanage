@@ -1,6 +1,7 @@
 import { useRouter, useSegments } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { GAME_CONFIG } from '@/constants/gameConfig';
 import { theme } from '@/constants/theme';
 import { useGameStore } from '@/store/useGameStore';
 
@@ -12,11 +13,12 @@ const TUTORIAL_STEPS: Record<number, { title: string; body: string; actionLabel?
   },
   2: {
     title: 'Pas de recruteur professionnel',
-    body: "Vous ne pouvez pas vous payer de recruteur professionnel. Utilisez l'option « Aller aux tournois de quartier » pour repérer des jeunes.",
+    body: "Utilisez les tournois de quartier pour repérer des jeunes talents sans recruteur.",
+    actionLabel: 'Aller aux tournois de quartier',
   },
   3: {
     title: 'Signez votre premier joueur !',
-    body: "Super ! Voici quelques jeunes talents. Regardez leurs stats et signez votre premier joueur (c'est gratuit, ils n'ont pas de club !).",
+    body: "Super ! Regardez les stats et signez un joueur gratuitement (ils n'ont pas de club).",
   },
 };
 
@@ -25,6 +27,8 @@ export function TutorialOverlay() {
   const segments = useSegments();
   const isTutorialActive = useGameStore((s) => s.isTutorialActive);
   const tutorialStep = useGameStore((s) => s.tutorialStep);
+  const agencyBudget = useGameStore((s) => s.agencyBudget);
+  const scoutNeighborhoodTournament = useGameStore((s) => s.scoutNeighborhoodTournament);
 
   const isOnScouting = segments.includes('scouting');
   const content = TUTORIAL_STEPS[tutorialStep];
@@ -33,16 +37,35 @@ export function TutorialOverlay() {
     return null;
   }
 
-  const handleAction = () => {
-    if (tutorialStep === 1) {
-      router.push('/(tabs)/scouting');
+  /** Étape 1 hors Scouting : overlay bloquant. Étapes 2–3 : bandeau non bloquant. */
+  const isBlockingOverlay = tutorialStep === 1 && !isOnScouting;
+
+  const handleGoToScouting = () => {
+    router.push('/(tabs)/scouting');
+  };
+
+  const handleTournament = async () => {
+    if (agencyBudget < GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_COST) {
+      Alert.alert(
+        'Fonds insuffisants',
+        `Il vous faut au moins ${GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_COST} € pour vous déplacer.`,
+      );
+      return;
+    }
+
+    const success = await scoutNeighborhoodTournament();
+    if (!success) {
+      Alert.alert('Erreur', 'Impossible de participer au tournoi.');
     }
   };
 
   return (
-    <View style={styles.overlay} pointerEvents="box-none">
-      <View style={styles.backdrop} />
-      <View style={styles.card}>
+    <View
+      style={[styles.overlay, isBlockingOverlay ? styles.overlayBlocking : styles.overlayHint]}
+      pointerEvents={isBlockingOverlay ? 'auto' : 'box-none'}>
+      {isBlockingOverlay ? <View style={styles.backdrop} /> : null}
+
+      <View style={styles.card} pointerEvents="auto">
         <View style={styles.stepBadge}>
           <Text style={styles.stepBadgeText}>Tutoriel {tutorialStep}/3</Text>
         </View>
@@ -50,9 +73,21 @@ export function TutorialOverlay() {
         <Text style={styles.body}>{content.body}</Text>
 
         {tutorialStep === 1 && !isOnScouting && content.actionLabel ? (
-          <Pressable style={styles.button} onPress={handleAction}>
+          <Pressable style={styles.button} onPress={handleGoToScouting}>
             <Text style={styles.buttonText}>{content.actionLabel}</Text>
           </Pressable>
+        ) : null}
+
+        {tutorialStep === 2 && content.actionLabel ? (
+          <Pressable style={styles.button} onPress={() => void handleTournament()}>
+            <Text style={styles.buttonText}>
+              {content.actionLabel} ({GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_COST} €)
+            </Text>
+          </Pressable>
+        ) : null}
+
+        {tutorialStep === 3 ? (
+          <Text style={styles.hint}>👆 Appuyez sur « Signer (gratuit) » sur un joueur ci-dessus.</Text>
         ) : null}
       </View>
     </View>
@@ -65,7 +100,13 @@ const styles = StyleSheet.create({
     zIndex: 1000,
     justifyContent: 'flex-end',
     padding: theme.spacing.md,
+  },
+  overlayBlocking: {
     paddingBottom: 100,
+  },
+  overlayHint: {
+    paddingBottom: 90,
+    justifyContent: 'flex-end',
   },
   backdrop: {
     ...StyleSheet.absoluteFill,
@@ -77,7 +118,11 @@ const styles = StyleSheet.create({
     padding: theme.spacing.lg,
     borderWidth: 1,
     borderColor: theme.colors.primary,
-    zIndex: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
   stepBadge: {
     alignSelf: 'flex-start',
@@ -103,6 +148,11 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     lineHeight: 22,
     marginBottom: theme.spacing.md,
+  },
+  hint: {
+    fontSize: 14,
+    color: theme.colors.warning,
+    lineHeight: 20,
   },
   button: {
     backgroundColor: theme.colors.primary,
