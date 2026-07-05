@@ -17,7 +17,6 @@ import {
   createMatchInviteMessage,
   createMatchSkippedMessage,
   getClubSquad,
-  simulateMatch,
   simulateMatchFixture,
 } from '@/engine/simulation/matchEngine';
 import { ensureLeagueSquads } from '@/engine/world/leagueSquadEnsurer';
