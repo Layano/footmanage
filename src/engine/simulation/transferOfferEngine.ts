@@ -65,10 +65,22 @@ function pickBonusType(player: Player): PerformanceBonusType {
   return 'appearance';
 }
 
+/**
+ * Indemnité de transfert réaliste : valeur marchande modulée par l'âge,
+ * la marge de progression et le budget du club acheteur.
+ */
 function estimateTransferFee(player: Player, club: Club): number {
-  const talent = player.overallRating / 99;
-  const budgetFactor = club.budget / 1_000_000;
-  return Math.round(player.marketValue * (0.5 + talent) * Math.min(budgetFactor, 3));
+  if (!player.contract.clubId) return 0;
+
+  const ageFactor =
+    player.age < 21 ? 1.3 : player.age < 25 ? 1.15 : player.age < 29 ? 1 : player.age < 32 ? 0.65 : 0.35;
+  const growthMargin = player.potentialRating - player.overallRating;
+  const potentialFactor = growthMargin > 20 ? 1.25 : growthMargin > 10 ? 1.1 : 1;
+  const negotiationNoise = 0.85 + Math.random() * 0.3;
+
+  const raw = player.marketValue * ageFactor * potentialFactor * negotiationNoise;
+  const budgetCap = club.budget * 0.35;
+  return Math.max(1_000, Math.round(Math.min(raw, budgetCap)));
 }
 
 function createOfferMessage(offer: ClubContractOffer, player: Player, club: Club): GameMessage {
@@ -85,7 +97,7 @@ function createOfferMessage(offer: ClubContractOffer, player: Player, club: Club
     id: `msg-offer-${offer.id}`,
     type: isLoan ? 'loan' : 'transfer',
     title: isLoan ? `Offre de prêt — ${club.shortName}` : `Offre de transfert — ${club.shortName}`,
-    body: `${club.name} propose ${player.displayName} : ${roleLabel}, ${offer.monthlyWage.toLocaleString('fr-FR')} €/mois, prime ${bonusLabel}${offer.fee > 0 ? `, ${isLoan ? 'indemnité prêt' : 'prix'} ${offer.fee.toLocaleString('fr-FR')} €` : ''}.`,
+    body: `${club.name} propose ${player.displayName} : ${roleLabel}, ${offer.monthlyWage.toLocaleString('fr-FR')} €/mois, prime ${bonusLabel}${isLoan ? ', prêt sans indemnité' : offer.fee > 0 ? `, prix ${offer.fee.toLocaleString('fr-FR')} €` : ''}.`,
     week: offer.week,
     season: offer.season,
     createdAt: new Date().toISOString(),
@@ -160,17 +172,17 @@ export function generateWeeklyTransferOffers(
     const bonusType = pickBonusType(client);
     const playingTimeRole = pickRandomPlayingTimeRole();
     const monthlyWage = estimateMonthlyWage(client, club, league);
-    const fee = isLoan
-      ? randomInt(5_000, 50_000)
-      : client.contract.clubId
-        ? estimateTransferFee(client, club)
-        : randomInt(0, Math.round(estimateTransferFee(client, club) * 0.3));
+    // Les prêts sont sans indemnité ; un agent libre ne coûte rien.
+    const fee = isLoan ? 0 : estimateTransferFee(client, club);
+
+    const bonusBase = Math.max(20, Math.round(monthlyWage * 0.05));
+    const bonusMax = Math.max(bonusBase + 10, Math.round(monthlyWage * 0.25));
 
     const terms = {
       monthlyWage,
       fee,
       playingTimeRole,
-      performanceBonus: randomInt(200, bonusType === 'appearance' ? 800 : 3_000),
+      performanceBonus: randomInt(bonusBase, bonusMax),
       contractYears: isLoan ? 1 : randomInt(2, 4),
     };
 

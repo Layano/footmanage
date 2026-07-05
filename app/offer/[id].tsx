@@ -83,12 +83,17 @@ export default function OfferDetailScreen() {
             <Text style={styles.label}>Prime performance · </Text>
             {bonusLabel}
           </Text>
-          <Text style={styles.row}>
-            <Text style={styles.label}>
-              {offer.type === 'loan' ? 'Indemnité de prêt' : 'Prix du transfert'} ·{' '}
+          {offer.type === 'loan' ? (
+            <Text style={styles.row}>
+              <Text style={styles.label}>Indemnité · </Text>
+              Prêt sans indemnité
             </Text>
-            {offer.fee.toLocaleString('fr-FR')} €
-          </Text>
+          ) : (
+            <Text style={styles.row}>
+              <Text style={styles.label}>Prix du transfert · </Text>
+              {offer.fee.toLocaleString('fr-FR')} €
+            </Text>
+          )}
           <Text style={styles.row}>
             <Text style={styles.label}>Durée · </Text>
             {offer.contractYears} an{offer.contractYears > 1 ? 's' : ''}

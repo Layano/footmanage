@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -122,13 +123,19 @@ export default function InboxScreen() {
   }, [advanceTime, isTutorialActive, tutorialStep, router]);
 
   const handleResetGame = useCallback(() => {
+    const doReset = () => void resetGame().then(() => router.replace('/new-game'));
+
+    if (Platform.OS === 'web') {
+      // Alert.alert multi-boutons est ignoré sur web.
+      if (typeof globalThis.confirm !== 'function' || globalThis.confirm('Effacer la progression actuelle et recommencer ?')) {
+        doReset();
+      }
+      return;
+    }
+
     Alert.alert('Nouvelle partie', 'Effacer la progression actuelle ?', [
       { text: 'Annuler', style: 'cancel' },
-      {
-        text: 'Recommencer',
-        style: 'destructive',
-        onPress: () => void resetGame().then(() => router.replace('/new-game')),
-      },
+      { text: 'Recommencer', style: 'destructive', onPress: doReset },
     ]);
   }, [resetGame, router]);
 

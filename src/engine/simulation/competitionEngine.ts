@@ -20,13 +20,26 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
+/** Tirage de Poisson (Knuth) — produit surtout des 0–3 buts. */
+function samplePoisson(lambda: number): number {
+  const limit = Math.exp(-lambda);
+  let k = 0;
+  let p = 1;
+  do {
+    k++;
+    p *= Math.random();
+  } while (p > limit);
+  return k - 1;
+}
+
 function simulateQuickScore(homeRep: number, awayRep: number): { home: number; away: number } {
-  const homeAdv = 1.1;
-  const homeLambda = clamp((homeRep / 80) * homeAdv, 0.5, 2.8);
-  const awayLambda = clamp(awayRep / 80, 0.5, 2.8);
-  const home = Math.min(5, Math.round(homeLambda + Math.random() * 2.2));
-  const away = Math.min(5, Math.round(awayLambda + Math.random() * 2.2));
-  return { home, away };
+  const diff = (homeRep - awayRep) / 45;
+  const homeLambda = clamp(1.45 + diff, 0.3, 3);
+  const awayLambda = clamp(1.15 - diff, 0.25, 2.8);
+  return {
+    home: Math.min(samplePoisson(homeLambda), 6),
+    away: Math.min(samplePoisson(awayLambda), 6),
+  };
 }
 
 function standingRow(competitionId: string, clubId: string): LeagueStanding {
@@ -60,7 +73,7 @@ function applyResult(standing: LeagueStanding, gf: number, ga: number): LeagueSt
   };
 }
 
-const LEAGUE_TIERS: LeagueTier[] = ['pro_1', 'pro_2', 'pro_3', 'pro_4'];
+const LEAGUE_TIERS: LeagueTier[] = ['pro_1', 'pro_2', 'pro_3', 'pro_4', 'junior'];
 
 /** Compétitions (ligues + coupe) d'un seul pays, sans continental. */
 export function buildCountryCompetitions(

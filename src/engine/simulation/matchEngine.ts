@@ -132,9 +132,10 @@ export function simulateMatch(
 ): MatchResult {
   const homeStr = teamStrength(homeSquad);
   const awayStr = teamStrength(awaySquad);
-  const homeAdv = 1.08;
-  const homeLambda = clamp((homeStr / 70) * homeAdv, 0.4, 2.8);
-  const awayLambda = clamp(awayStr / 70, 0.4, 2.8);
+  // Espérance de buts par équipe (~1 à 2), avantage domicile inclus.
+  const strDiff = (homeStr - awayStr) / 25;
+  const homeLambda = clamp(1.45 + strDiff, 0.3, 3);
+  const awayLambda = clamp(1.15 - strDiff, 0.25, 2.8);
 
   let homeScore = 0;
   let awayScore = 0;
@@ -160,8 +161,8 @@ export function simulateMatch(
   const homeGoals = new Map<string, number>();
   const awayGoals = new Map<string, number>();
 
-  const goalChanceHome = homeLambda / 30;
-  const goalChanceAway = awayLambda / 30;
+  const goalChanceHome = homeLambda / 90;
+  const goalChanceAway = awayLambda / 90;
 
   for (let min = 1; min <= 90; min++) {
     if (min === 45) {

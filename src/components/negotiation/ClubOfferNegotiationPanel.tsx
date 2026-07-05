@@ -121,20 +121,22 @@ export function ClubOfferNegotiationPanel({
               />
             </View>
 
-            <View style={styles.row}>
-              <Text style={styles.label}>
-                {offer.type === 'loan' ? 'Indemnité prêt (€)' : 'Prix transfert (€)'}
-              </Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="numeric"
-                value={String(terms.fee)}
-                onChangeText={(t) => {
-                  const n = Number.parseInt(t.replace(/\D/g, ''), 10);
-                  setTerms({ ...terms, fee: Number.isFinite(n) ? n : 0 });
-                }}
-              />
-            </View>
+            {offer.type !== 'loan' ? (
+              <View style={styles.row}>
+                <Text style={styles.label}>Prix transfert (€)</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  value={String(terms.fee)}
+                  onChangeText={(t) => {
+                    const n = Number.parseInt(t.replace(/\D/g, ''), 10);
+                    setTerms({ ...terms, fee: Number.isFinite(n) ? n : 0 });
+                  }}
+                />
+              </View>
+            ) : (
+              <Text style={styles.loanNote}>Prêt sans indemnité — le club couvre le salaire.</Text>
+            )}
 
             <View style={styles.row}>
               <Text style={styles.label}>Prime performance (€)</Text>
@@ -220,6 +222,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: theme.colors.textMuted,
     marginBottom: theme.spacing.sm,
+  },
+  loanNote: {
+    fontSize: 13,
+    color: theme.colors.warning,
+    marginTop: theme.spacing.sm,
+    lineHeight: 18,
   },
   row: {
     marginTop: theme.spacing.sm,
