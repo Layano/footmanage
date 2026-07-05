@@ -1,13 +1,37 @@
 import { GAME_CONFIG } from '@/constants/gameConfig';
 import type { League } from '@/types/league';
 
+const STANDARD_TRANSFER_WINDOWS = {
+  summer: {
+    startWeek: GAME_CONFIG.TRANSFER_SUMMER_START,
+    endWeek: GAME_CONFIG.TRANSFER_SUMMER_END,
+  },
+  winter: {
+    startWeek: GAME_CONFIG.TRANSFER_WINTER_START,
+    endWeek: GAME_CONFIG.TRANSFER_WINTER_END,
+  },
+} as const;
+
+/** Aligne les fenêtres mercato persistées sur la config actuelle du jeu. */
+export function normalizeLeagueTransferWindows(league: League): League {
+  return {
+    ...league,
+    transferWindows: { ...STANDARD_TRANSFER_WINDOWS },
+  };
+}
+
 /** Vérifie si une semaine est dans une fenêtre de transfert (été ou hiver). */
-export function isInTransferWindow(week: number, league: League): boolean {
-  const { summer, winter } = league.transferWindows;
+export function isWeekInTransferWindow(week: number): boolean {
+  const { summer, winter } = STANDARD_TRANSFER_WINDOWS;
   return (
     (week >= summer.startWeek && week <= summer.endWeek) ||
     (week >= winter.startWeek && week <= winter.endWeek)
   );
+}
+
+/** Vérifie si une semaine est dans une fenêtre de transfert (été ou hiver). */
+export function isInTransferWindow(week: number, _league?: League): boolean {
+  return isWeekInTransferWindow(week);
 }
 
 /** Une semaine est en mercato si au moins une ligue du pays l'est. */
@@ -16,8 +40,9 @@ export function isCountryInTransferWindow(
   leagues: League[],
   countryCode: string,
 ): boolean {
+  if (!isWeekInTransferWindow(week)) return false;
   const countryLeagues = leagues.filter((l) => l.countryCode === countryCode);
-  return countryLeagues.some((l) => isInTransferWindow(week, l));
+  return countryLeagues.length > 0;
 }
 
 export function getTransferWindowLabel(
@@ -26,16 +51,9 @@ export function getTransferWindowLabel(
   countryCode: string,
 ): string | null {
   if (!isCountryInTransferWindow(week, leagues, countryCode)) return null;
-  const league = leagues.find((l) => l.countryCode === countryCode && isInTransferWindow(week, l));
-  if (!league) return 'Mercato';
-  const { summer, winter } = league.transferWindows;
+  const { summer, winter } = STANDARD_TRANSFER_WINDOWS;
   if (week >= summer.startWeek && week <= summer.endWeek) return 'Mercato estival (S1–4)';
   return 'Mercato hivernal (S25–33)';
-}
-
-/** Semaines où de nouvelles offres peuvent être générées (début de chaque mercato). */
-export function isOfferGenerationWeek(week: number): boolean {
-  return week === GAME_CONFIG.TRANSFER_SUMMER_START || week === GAME_CONFIG.TRANSFER_WINTER_START;
 }
 
 /** Semaine de championnat avec matchs (hors périodes de mercato). */

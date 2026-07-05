@@ -28,7 +28,7 @@ import {
   generateWeeklyTransferOffers,
   normalizeClubOffer,
 } from '@/engine/simulation/transferOfferEngine';
-import { getTransferWindowLabel, isLeagueMatchWeek } from '@/engine/simulation/transferWindow';
+import { getTransferWindowLabel, isLeagueMatchWeek, normalizeLeagueTransferWindows } from '@/engine/simulation/transferWindow';
 import { evaluateClubNegotiation } from '@/engine/negotiation/clubOfferNegotiation';
 import { PLAYING_TIME_ROLE_LABELS } from '@/constants/playingTime';
 import type { NegotiableClubOfferTerms } from '@/types/transfer';
@@ -294,6 +294,7 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
       normalizeClubOffer(o as ClubContractOffer & { expectedMinutesPercent?: number }),
     ),
     matchFixtures: saved.matchFixtures ?? [],
+    leagues: (saved.leagues ?? defaults.leagues).map(normalizeLeagueTransferWindows),
     myPlayers: (saved.myPlayers ?? []).map(withPlayerDefaults),
     scoutedPlayers: (saved.scoutedPlayers ?? []).map(withPlayerDefaults),
     worldPlayers: (saved.worldPlayers ?? []).map(withPlayerDefaults),
@@ -310,6 +311,40 @@ function updatePlayerInLists(
     myPlayers: state.myPlayers.map((p) => (p.id === playerId ? updater(p) : p)),
     scoutedPlayers: state.scoutedPlayers.map((p) => (p.id === playerId ? updater(p) : p)),
     worldPlayers: state.worldPlayers.map((p) => (p.id === playerId ? updater(p) : p)),
+  };
+}
+
+function tryGenerateTransferOffers(state: {
+  currentWeek: number;
+  currentSeason: number;
+  myPlayers: Player[];
+  clubs: Club[];
+  leagues: League[];
+  agencyCountryCode: string;
+  pendingOffers: ClubContractOffer[];
+}): {
+  pendingOffers: ClubContractOffer[];
+  myPlayers: Player[];
+  messages: GameMessage[];
+} {
+  if (state.myPlayers.length === 0) {
+    return { pendingOffers: state.pendingOffers, myPlayers: state.myPlayers, messages: [] };
+  }
+
+  const generated = generateWeeklyTransferOffers(
+    state.currentWeek,
+    state.currentSeason,
+    state.myPlayers,
+    state.clubs,
+    state.leagues,
+    state.agencyCountryCode,
+    state.pendingOffers,
+  );
+
+  return {
+    pendingOffers: [...state.pendingOffers, ...generated.offers],
+    myPlayers: generated.updatedClients,
+    messages: generated.messages,
   };
 }
 
@@ -353,6 +388,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
 
       set({ ...saved, isHydrated: true, hasActiveGame: saved.hasActiveGame ?? true });
+
+      const hydrated = get();
+      const offers = tryGenerateTransferOffers(hydrated);
+      if (offers.messages.length > 0) {
+        set({
+          pendingOffers: offers.pendingOffers,
+          myPlayers: offers.myPlayers,
+          messages: [...offers.messages, ...hydrated.messages].slice(
+            0,
+            GAME_CONFIG.MAX_DASHBOARD_MESSAGES,
+          ),
+        });
+        await get().saveGame();
+      }
+
       return true;
     } catch {
       await clearAllSaves();
@@ -493,9 +543,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
       tutorialStep: isFirstClient ? 0 : state.tutorialStep,
     };
 
-    set({
+    const offers = tryGenerateTransferOffers({
       ...nextState,
-      agency: syncAgency({ ...nextState, agency: nextAgency }),
+      pendingOffers: state.pendingOffers,
+    });
+
+    const stateWithOffers: PersistedGameState = {
+      ...nextState,
+      myPlayers: offers.myPlayers,
+      pendingOffers: offers.pendingOffers,
+      messages: [...offers.messages, ...nextState.messages].slice(
+        0,
+        GAME_CONFIG.MAX_DASHBOARD_MESSAGES,
+      ),
+    };
+
+    set({
+      ...stateWithOffers,
+      agency: syncAgency({ ...stateWithOffers, agency: nextAgency }),
     });
 
     await get().saveGame();
@@ -780,11 +845,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let worldPlayers = evolveAllPlayers(state.worldPlayers);
 
     let pendingOffers = state.pendingOffers;
-    const expired = expireOldOffers(pendingOffers, nextWeek);
-    pendingOffers = expired.offers;
 
     const transferWindowLabel = getTransferWindowLabel(nextWeek, state.leagues, state.agencyCountryCode);
-    if (transferWindowLabel && state.myPlayers.length > 0) {
+    if (transferWindowLabel && myPlayers.length > 0) {
       const generated = generateWeeklyTransferOffers(
         nextWeek,
         nextSeason,
@@ -798,6 +861,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       myPlayers = generated.updatedClients;
       newMessages.push(...generated.messages);
     }
+
+    const expired = expireOldOffers(pendingOffers, nextWeek);
+    pendingOffers = expired.offers;
 
     let matchFixtures = [...state.matchFixtures];
     if (isLeagueMatchWeek(nextWeek)) {

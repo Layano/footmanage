@@ -11,7 +11,7 @@ import type { GameMessage } from '@/types/game';
 import type { League } from '@/types/league';
 import type { Player } from '@/types/player';
 import type { ClubContractOffer, PerformanceBonusType } from '@/types/transfer';
-import { isCountryInTransferWindow, isOfferGenerationWeek } from './transferWindow';
+import { isCountryInTransferWindow } from './transferWindow';
 import { isGoalkeeper } from '@/types/player';
 
 function randomInt(min: number, max: number): number {
@@ -86,7 +86,7 @@ function canReceiveOfferInWindow(client: Player, week: number, season: number): 
   return true;
 }
 
-/** Génère au plus une offre par joueur au début de chaque mercato. */
+/** Génère au plus une offre par joueur et par fenêtre mercato (été/hiver). */
 export function generateWeeklyTransferOffers(
   week: number,
   season: number,
@@ -96,7 +96,7 @@ export function generateWeeklyTransferOffers(
   countryCode: string,
   existingOffers: ClubContractOffer[],
 ): { offers: ClubContractOffer[]; messages: GameMessage[]; updatedClients: Player[] } {
-  if (!isCountryInTransferWindow(week, leagues, countryCode) || !isOfferGenerationWeek(week)) {
+  if (!isCountryInTransferWindow(week, leagues, countryCode)) {
     return { offers: [], messages: [], updatedClients: clients };
   }
 
