@@ -13,6 +13,19 @@ export const GAME_CONFIG = {
   /** Commission simple sur revenus aléatoires occasionnels (placeholder). */
   RANDOM_COMMISSION_CHANCE: 0.03,
   RANDOM_COMMISSION_AMOUNT: 15_000,
+
+  /** Budget de départ — tout en bas de l'échelle. */
+  STARTING_BUDGET: 2_000,
+  /** Frais de déplacement pour un tournoi de quartier. */
+  NEIGHBORHOOD_TOURNAMENT_COST: 50,
+  /** Nombre de joueurs générés par tournoi de quartier. */
+  NEIGHBORHOOD_TOURNAMENT_PLAYERS: 3,
+  /** Stats actuelles min/max des amateurs (échelle 1–20). */
+  AMATEUR_STAT_MIN: 2,
+  AMATEUR_STAT_MAX: 6,
+  /** Potentiel intéressant min/max pour la pépite du tournoi (échelle affichée 1–20). */
+  AMATEUR_GEM_POTENTIAL_MIN: 8,
+  AMATEUR_GEM_POTENTIAL_MAX: 15,
 } as const;
 
-export const SAVE_GAME_KEY = '@footmanage/save-v1';
+export const SAVE_GAME_KEY = '@footmanage/save-v2';

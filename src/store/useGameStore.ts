@@ -2,7 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
 import { GAME_CONFIG, SAVE_GAME_KEY } from '@/constants/gameConfig';
-import { MOCK_CLUBS, MOCK_GAME_DATA, MOCK_LEAGUES } from '@/data/mockData';
+import { AGENCY_ID, MOCK_CLUBS, MOCK_GAME_DATA, MOCK_LEAGUES } from '@/data/mockData';
+import { generateNeighborhoodAmateurs } from '@/engine/players/amateurGenerator';
 import { processWeeklyEconomy } from '@/engine/simulation/economyEngine';
 import { generateWeeklyEvent } from '@/engine/simulation/eventGenerator';
 import {
@@ -32,6 +33,8 @@ export interface PersistedGameState {
   messages: GameMessage[];
   totalRevenue: number;
   totalExpenses: number;
+  isTutorialActive: boolean;
+  tutorialStep: number;
 }
 
 interface GameStore extends PersistedGameState {
@@ -40,6 +43,9 @@ interface GameStore extends PersistedGameState {
   loadGame: () => Promise<boolean>;
   saveGame: () => Promise<void>;
   advanceTime: () => Promise<void>;
+  scoutNeighborhoodTournament: () => Promise<boolean>;
+  signAmateurPlayer: (playerId: string) => Promise<boolean>;
+  setTutorialStep: (step: number) => void;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -48,33 +54,48 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function splitPlayers(players: Player[]): { myPlayers: Player[]; scoutedPlayers: Player[] } {
+function createStarterAgency(): Agency {
+  const base = clone(MOCK_GAME_DATA.agency);
+
   return {
-    myPlayers: players.filter((p) => p.isClient),
-    scoutedPlayers: players.filter((p) => !p.isClient),
+    ...base,
+    reputation: 5,
+    finances: {
+      ...base.finances,
+      balance: GAME_CONFIG.STARTING_BUDGET,
+      totalRevenue: 0,
+      totalExpenses: 0,
+      operatingCosts: 0,
+    },
+    staff: [],
+    clientPlayerIds: [],
+    office: {
+      city: 'Banlieue',
+      country: 'France',
+      level: 1,
+    },
   };
 }
 
 function getInitialState(): PersistedGameState {
-  const { myPlayers, scoutedPlayers } = splitPlayers(clone(MOCK_GAME_DATA.players));
-  const agency = clone(MOCK_GAME_DATA.agency);
+  const agency = createStarterAgency();
 
   return {
     currentWeek: 1,
     currentSeason: 2025,
-    agencyBudget: agency.finances.balance,
+    agencyBudget: GAME_CONFIG.STARTING_BUDGET,
     agency,
-    myPlayers,
-    scoutedPlayers,
-    staff: clone(agency.staff),
+    myPlayers: [],
+    scoutedPlayers: [],
+    staff: [],
     leagues: clone(MOCK_LEAGUES),
     clubs: clone(MOCK_CLUBS),
     messages: [
       {
         id: 'msg-welcome',
         type: 'info',
-        title: 'Bienvenue',
-        body: 'Votre agence est opérationnelle. Recrutez des talents et développez votre réseau.',
+        title: 'Nouveau départ',
+        body: "Votre agence est vide. Pas d'argent, pas de clients. À vous de construire votre empire.",
         week: 1,
         season: 2025,
         createdAt: new Date().toISOString(),
@@ -83,6 +104,8 @@ function getInitialState(): PersistedGameState {
     ],
     totalRevenue: 0,
     totalExpenses: 0,
+    isTutorialActive: true,
+    tutorialStep: 1,
   };
 }
 
@@ -100,6 +123,8 @@ function toPersistedState(state: GameStore): PersistedGameState {
     messages: state.messages,
     totalRevenue: state.totalRevenue,
     totalExpenses: state.totalExpenses,
+    isTutorialActive: state.isTutorialActive,
+    tutorialStep: state.tutorialStep,
   };
 }
 
@@ -109,6 +134,31 @@ function evolveAllPlayers(players: Player[]): Player[] {
 
 function ageAllPlayers(players: Player[]): Player[] {
   return players.map((player) => agePlayerByOneYear(player));
+}
+
+function syncAgency(state: PersistedGameState, overrides?: Partial<Agency>): Agency {
+  return {
+    ...(overrides ? { ...state.agency, ...overrides } : state.agency),
+    finances: {
+      ...state.agency.finances,
+      balance: state.agencyBudget,
+      totalRevenue: state.totalRevenue,
+      totalExpenses: state.totalExpenses,
+    },
+    clientPlayerIds: state.myPlayers.map((p) => p.id),
+    staff: state.staff,
+  };
+}
+
+function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGameState {
+  const defaults = getInitialState();
+  return {
+    ...defaults,
+    ...saved,
+    agency: { ...defaults.agency, ...saved.agency },
+    isTutorialActive: saved.isTutorialActive ?? false,
+    tutorialStep: saved.tutorialStep ?? 0,
+  };
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -137,7 +187,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         return false;
       }
 
-      const saved = JSON.parse(raw) as PersistedGameState;
+      const saved = normalizeLoadedState(JSON.parse(raw) as Partial<PersistedGameState>);
       set({ ...saved, isHydrated: true });
       return true;
     } catch {
@@ -146,18 +196,114 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
   },
 
+  setTutorialStep: (step: number) => {
+    set({ tutorialStep: step });
+    void get().saveGame();
+  },
+
+  scoutNeighborhoodTournament: async () => {
+    const state = get();
+    const cost = GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_COST;
+
+    if (state.agencyBudget < cost) {
+      return false;
+    }
+
+    const newAmateurs = generateNeighborhoodAmateurs(state.currentWeek, state.currentSeason);
+    const nextWeek = state.currentWeek + 1;
+    const nextBudget = state.agencyBudget - cost;
+    const nextExpenses = state.totalExpenses + cost;
+
+    const newMessage: GameMessage = {
+      id: `msg-tournament-${Date.now()}`,
+      type: 'scout',
+      title: 'Tournoi de quartier',
+      body: `${newAmateurs.length} jeunes talents repérés dans les tournois locaux.`,
+      week: nextWeek,
+      season: state.currentSeason,
+      createdAt: new Date().toISOString(),
+      read: false,
+    };
+
+    const nextState: PersistedGameState = {
+      ...state,
+      currentWeek: nextWeek,
+      agencyBudget: nextBudget,
+      totalExpenses: nextExpenses,
+      scoutedPlayers: [...newAmateurs, ...state.scoutedPlayers],
+      messages: [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES),
+      tutorialStep: state.isTutorialActive && state.tutorialStep === 2 ? 3 : state.tutorialStep,
+    };
+
+    set({
+      ...nextState,
+      agency: syncAgency(nextState),
+    });
+
+    await get().saveGame();
+    return true;
+  },
+
+  signAmateurPlayer: async (playerId: string) => {
+    const state = get();
+    const player = state.scoutedPlayers.find((p) => p.id === playerId);
+
+    if (!player || player.contract.clubId !== null) {
+      return false;
+    }
+
+    const signedPlayer: Player = {
+      ...player,
+      isClient: true,
+      agentId: AGENCY_ID,
+      status: 'active',
+    };
+
+    const myPlayers = [...state.myPlayers, signedPlayer];
+    const scoutedPlayers = state.scoutedPlayers.filter((p) => p.id !== playerId);
+    const isFirstClient = state.myPlayers.length === 0;
+
+    const newMessage: GameMessage = {
+      id: `msg-sign-${playerId}-${Date.now()}`,
+      type: 'info',
+      title: 'Premier client !',
+      body: `Vous représentez désormais ${signedPlayer.displayName}.`,
+      week: state.currentWeek,
+      season: state.currentSeason,
+      createdAt: new Date().toISOString(),
+      read: false,
+    };
+
+    const nextState: PersistedGameState = {
+      ...state,
+      myPlayers,
+      scoutedPlayers,
+      messages: isFirstClient
+        ? [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES)
+        : state.messages,
+      isTutorialActive: isFirstClient ? false : state.isTutorialActive,
+      tutorialStep: isFirstClient ? 0 : state.tutorialStep,
+    };
+
+    set({
+      ...nextState,
+      agency: syncAgency(nextState),
+    });
+
+    await get().saveGame();
+    return true;
+  },
+
   advanceTime: async () => {
     const state = get();
     let nextWeek = state.currentWeek + 1;
     let nextSeason = state.currentSeason;
 
-    // ── 1. Économie hebdomadaire ─────────────────────────────────────────────
     const economy = processWeeklyEconomy(state.staff, state.agency.finances.operatingCosts);
     let nextBudget = state.agencyBudget + economy.netChange;
     let nextRevenue = state.totalRevenue + economy.commissionIncome;
     let nextExpenses = state.totalExpenses + economy.totalExpense;
 
-    // Message financier si commission reçue (placeholder en attendant le moteur mercato).
     const newMessages: GameMessage[] = [];
     if (economy.commissionIncome > 0) {
       newMessages.push({
@@ -172,11 +318,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       });
     }
 
-    // ── 2. Évolution des joueurs (clients + marché) ────────────────────────────
     let myPlayers = evolveAllPlayers(state.myPlayers);
     let scoutedPlayers = evolveAllPlayers(state.scoutedPlayers);
 
-    // ── 3. Fin de saison : vieillissement ────────────────────────────────────
     const isSeasonEnd = nextWeek > WEEKS_PER_SEASON;
     if (isSeasonEnd) {
       myPlayers = ageAllPlayers(myPlayers);
@@ -196,7 +340,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
       });
     }
 
-    // ── 4. Événements aléatoires ─────────────────────────────────────────────
     const weeklyEvent = generateWeeklyEvent(nextWeek, nextSeason, myPlayers, state.clubs);
     if (weeklyEvent) {
       newMessages.push(weeklyEvent);
@@ -207,27 +350,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
       GAME_CONFIG.MAX_DASHBOARD_MESSAGES,
     );
 
-    const updatedAgency: Agency = {
-      ...state.agency,
-      finances: {
-        ...state.agency.finances,
-        balance: nextBudget,
-        totalRevenue: nextRevenue,
-        totalExpenses: nextExpenses,
-      },
-      clientPlayerIds: myPlayers.map((p) => p.id),
-    };
-
-    set({
+    const nextState: PersistedGameState = {
+      ...state,
       currentWeek: nextWeek,
       currentSeason: nextSeason,
       agencyBudget: nextBudget,
-      agency: updatedAgency,
       myPlayers,
       scoutedPlayers,
       messages,
       totalRevenue: nextRevenue,
       totalExpenses: nextExpenses,
+    };
+
+    set({
+      ...nextState,
+      agency: syncAgency(nextState),
     });
 
     await get().saveGame();
@@ -242,4 +379,15 @@ export function getClubFromStore(clubId: string | null): Club | undefined {
 
 export function formatGameDate(week: number, season: number): string {
   return `Semaine ${week} — Saison ${season}/${season + 1}`;
+}
+
+/** Pendant le tutoriel, seul l'onglet Scouting est accessible (étapes 1 à 3). */
+export function isTabLockedDuringTutorial(
+  tabName: 'index' | 'players' | 'scouting' | 'finance',
+  isTutorialActive: boolean,
+  tutorialStep: number,
+): boolean {
+  if (!isTutorialActive || tutorialStep < 1) return false;
+  if (tutorialStep <= 3) return tabName !== 'scouting';
+  return false;
 }
