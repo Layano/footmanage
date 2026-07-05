@@ -34,3 +34,9 @@ export {
   isGoalkeeper,
   hasGoalkeeperAttributes,
 } from './player';
+
+export type { League, CountryCode } from './league';
+export type { Club } from './club';
+export type { Staff, StaffRole, StaffBonuses } from './staff';
+export type { Agency, AgencyFinances } from './agency';
+export type { GameTime } from './game';

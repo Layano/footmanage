@@ -1,9 +1,9 @@
-import type { AttributeKey, PlayerAttributes } from '../types/attributes';
-import type { PlayerPosition } from '../types/positions';
+import type { AttributeKey, PlayerAttributes } from '../../types/attributes';
+import type { PlayerPosition } from '../../types/positions';
 import {
   POSITION_ATTRIBUTE_WEIGHTS,
   attributesToOverallRating,
-} from '../constants/positionWeights';
+} from '../../constants/positionWeights';
 
 /** Aplatit tous les attributs d'un joueur en un dictionnaire clé → valeur. */
 export function flattenAttributes(attributes: PlayerAttributes): Partial<Record<AttributeKey, number>> {

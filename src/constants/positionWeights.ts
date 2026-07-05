@@ -1,4 +1,4 @@
-import type { PositionWeightMatrix } from './positions';
+import type { PositionWeightMatrix } from '../types/positions';
 
 /**
  * Matrice de pondération par poste pour le calcul de la note globale.
