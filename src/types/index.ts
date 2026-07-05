@@ -36,6 +36,18 @@ export {
 } from './player';
 
 export type { League, CountryCode } from './league';
+export type {
+  FootballCountry,
+  GameMode,
+  NewGameConfig,
+  GeneratedWorld,
+  LeagueTier,
+  CountryFootballTier,
+} from './world';
+export {
+  GAME_MODE_LABELS,
+  GAME_MODE_DESCRIPTIONS,
+} from './world';
 export type { Club } from './club';
 export type { Staff, StaffRole, StaffBonuses } from './staff';
 export type { Agency, AgencyFinances } from './agency';

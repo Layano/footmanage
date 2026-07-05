@@ -20,6 +20,8 @@ export const GAME_CONFIG = {
   NEIGHBORHOOD_TOURNAMENT_COST: 50,
   /** Nombre de joueurs générés par tournoi de quartier. */
   NEIGHBORHOOD_TOURNAMENT_PLAYERS: 3,
+  /** Identifiant de l'agence du joueur. */
+  AGENCY_ID: 'agency-player-001',
   /** Stats actuelles min/max des amateurs (échelle 1–20). */
   AMATEUR_STAT_MIN: 2,
   AMATEUR_STAT_MAX: 6,
@@ -28,8 +30,8 @@ export const GAME_CONFIG = {
   AMATEUR_GEM_POTENTIAL_MAX: 15,
 } as const;
 
-export const SAVE_GAME_VERSION = 3;
-export const SAVE_GAME_KEY = '@footmanage/save-v3';
+export const SAVE_GAME_VERSION = 4;
+export const SAVE_GAME_KEY = '@footmanage/save-v4';
 
 /** Anciennes clés — supprimées à la migration. */
-export const LEGACY_SAVE_KEYS = ['@footmanage/save-v1', '@footmanage/save-v2'] as const;
+export const LEGACY_SAVE_KEYS = ['@footmanage/save-v1', '@footmanage/save-v2', '@footmanage/save-v3'] as const;

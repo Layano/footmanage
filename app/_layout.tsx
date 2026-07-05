@@ -15,6 +15,8 @@ export default function RootLayout() {
           headerTintColor: theme.colors.text,
           contentStyle: { backgroundColor: theme.colors.background },
         }}>
+        <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="new-game" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="player/[id]" options={{ title: 'Fiche joueur' }} />
       </Stack>

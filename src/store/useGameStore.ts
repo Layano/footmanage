@@ -2,8 +2,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
 import { GAME_CONFIG, SAVE_GAME_KEY, SAVE_GAME_VERSION } from '@/constants/gameConfig';
-import { AGENCY_ID, MOCK_CLUBS, MOCK_GAME_DATA, MOCK_LEAGUES } from '@/data/mockData';
+import { getCountryByCode } from '@/data/world/countries';
 import { generateNeighborhoodAmateurs } from '@/engine/players/amateurGenerator';
+import { buildWorldDatabase } from '@/engine/world/worldGenerator';
 import { processWeeklyEconomy } from '@/engine/simulation/economyEngine';
 import { generateWeeklyEvent } from '@/engine/simulation/eventGenerator';
 import {
@@ -18,6 +19,7 @@ import { WEEKS_PER_SEASON } from '@/types/game';
 import type { League } from '@/types/league';
 import type { Player } from '@/types/player';
 import type { Staff } from '@/types/staff';
+import type { GameMode, NewGameConfig } from '@/types/world';
 
 // ─── Types persistés ──────────────────────────────────────────────────────────
 
@@ -37,11 +39,15 @@ export interface PersistedGameState {
   totalExpenses: number;
   isTutorialActive: boolean;
   tutorialStep: number;
+  worldPlayers: Player[];
+  gameMode: GameMode;
+  agencyCountryCode: string;
+  hasActiveGame: boolean;
 }
 
 interface GameStore extends PersistedGameState {
   isHydrated: boolean;
-  initNewGame: () => Promise<void>;
+  startNewGame: (config: NewGameConfig) => Promise<void>;
   loadGame: () => Promise<boolean>;
   saveGame: () => Promise<void>;
   advanceTime: () => Promise<void>;
@@ -58,49 +64,76 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function createStarterAgency(): Agency {
-  const base = clone(MOCK_GAME_DATA.agency);
-
+function createStarterAgency(name: string, countryName: string, city: string): Agency {
   return {
-    ...base,
+    id: GAME_CONFIG.AGENCY_ID,
+    name,
     reputation: 5,
+    foundedYear: 2025,
     finances: {
-      ...base.finances,
       balance: GAME_CONFIG.STARTING_BUDGET,
       totalRevenue: 0,
       totalExpenses: 0,
+      commissionRate: 10,
       operatingCosts: 0,
     },
     staff: [],
     clientPlayerIds: [],
+    maxClients: 10,
     office: {
-      city: 'Banlieue',
-      country: 'France',
+      city,
+      country: countryName,
       level: 1,
     },
   };
 }
 
-function getInitialState(): PersistedGameState {
-  const agency = createStarterAgency();
+function getEmptyShellState(): PersistedGameState {
+  return {
+    saveVersion: SAVE_GAME_VERSION,
+    currentWeek: 1,
+    currentSeason: 2025,
+    agencyBudget: GAME_CONFIG.STARTING_BUDGET,
+    agency: createStarterAgency('Mon Agence', 'France', 'Paris'),
+    myPlayers: [],
+    scoutedPlayers: [],
+    staff: [],
+    leagues: [],
+    clubs: [],
+    worldPlayers: [],
+    messages: [],
+    totalRevenue: 0,
+    totalExpenses: 0,
+    isTutorialActive: false,
+    tutorialStep: 0,
+    gameMode: 'career',
+    agencyCountryCode: 'FRA',
+    hasActiveGame: false,
+  };
+}
+
+function buildFreshGameState(config: NewGameConfig): PersistedGameState {
+  const country = getCountryByCode(config.countryCode) ?? getCountryByCode('FRA')!;
+  const world = buildWorldDatabase({ agencyCountryCode: config.countryCode });
 
   return {
     saveVersion: SAVE_GAME_VERSION,
     currentWeek: 1,
     currentSeason: 2025,
     agencyBudget: GAME_CONFIG.STARTING_BUDGET,
-    agency,
+    agency: createStarterAgency(config.agencyName, country.name, country.defaultCity),
     myPlayers: [],
     scoutedPlayers: [],
     staff: [],
-    leagues: clone(MOCK_LEAGUES),
-    clubs: clone(MOCK_CLUBS),
+    leagues: world.leagues,
+    clubs: world.clubs,
+    worldPlayers: world.players,
     messages: [
       {
         id: 'msg-welcome',
         type: 'info',
         title: 'Nouveau départ',
-        body: "Votre agence est vide. Pas d'argent, pas de clients. À vous de construire votre empire.",
+        body: `Bienvenue à ${config.agencyName} ! Votre agence est basée à ${country.defaultCity}.`,
         week: 1,
         season: 2025,
         createdAt: new Date().toISOString(),
@@ -111,6 +144,9 @@ function getInitialState(): PersistedGameState {
     totalExpenses: 0,
     isTutorialActive: true,
     tutorialStep: 1,
+    gameMode: config.gameMode,
+    agencyCountryCode: config.countryCode,
+    hasActiveGame: true,
   };
 }
 
@@ -131,6 +167,10 @@ function toPersistedState(state: GameStore): PersistedGameState {
     totalExpenses: state.totalExpenses,
     isTutorialActive: state.isTutorialActive,
     tutorialStep: state.tutorialStep,
+    worldPlayers: state.worldPlayers,
+    gameMode: state.gameMode,
+    agencyCountryCode: state.agencyCountryCode,
+    hasActiveGame: state.hasActiveGame,
   };
 }
 
@@ -161,14 +201,18 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
     return null;
   }
 
-  const defaults = getInitialState();
+  const defaults = getEmptyShellState();
   return {
     ...defaults,
     ...saved,
     saveVersion: SAVE_GAME_VERSION,
     agency: { ...defaults.agency, ...saved.agency },
+    worldPlayers: saved.worldPlayers ?? [],
     isTutorialActive: saved.isTutorialActive ?? false,
     tutorialStep: saved.tutorialStep ?? 0,
+    gameMode: saved.gameMode ?? 'career',
+    agencyCountryCode: saved.agencyCountryCode ?? 'FRA',
+    hasActiveGame: saved.hasActiveGame ?? true,
   };
 }
 
@@ -176,28 +220,30 @@ function updatePlayerInLists(
   state: PersistedGameState,
   playerId: string,
   updater: (player: Player) => Player,
-): Pick<PersistedGameState, 'myPlayers' | 'scoutedPlayers'> {
+): Pick<PersistedGameState, 'myPlayers' | 'scoutedPlayers' | 'worldPlayers'> {
   return {
     myPlayers: state.myPlayers.map((p) => (p.id === playerId ? updater(p) : p)),
     scoutedPlayers: state.scoutedPlayers.map((p) => (p.id === playerId ? updater(p) : p)),
+    worldPlayers: state.worldPlayers.map((p) => (p.id === playerId ? updater(p) : p)),
   };
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 export const useGameStore = create<GameStore>((set, get) => ({
-  ...getInitialState(),
+  ...getEmptyShellState(),
   isHydrated: false,
 
-  initNewGame: async () => {
+  startNewGame: async (config: NewGameConfig) => {
     await clearAllSaves();
-    const freshState = getInitialState();
-    set({ ...freshState, isHydrated: true });
+    const freshState = buildFreshGameState(config);
+    set({ ...freshState, isHydrated: true, hasActiveGame: true });
     await get().saveGame();
   },
 
   resetGame: async () => {
-    await get().initNewGame();
+    await clearAllSaves();
+    set({ ...getEmptyShellState(), isHydrated: true, hasActiveGame: false });
   },
 
   saveGame: async () => {
@@ -210,22 +256,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
     try {
       const raw = await AsyncStorage.getItem(SAVE_GAME_KEY);
       if (!raw) {
-        set({ isHydrated: true });
+        set({ isHydrated: true, hasActiveGame: false });
         return false;
       }
 
       const saved = normalizeLoadedState(JSON.parse(raw) as Partial<PersistedGameState>);
       if (!saved) {
         await clearAllSaves();
-        set({ isHydrated: true });
+        set({ isHydrated: true, hasActiveGame: false });
         return false;
       }
 
-      set({ ...saved, isHydrated: true });
+      set({ ...saved, isHydrated: true, hasActiveGame: saved.hasActiveGame ?? true });
       return true;
     } catch {
       await clearAllSaves();
-      set({ isHydrated: true });
+      set({ isHydrated: true, hasActiveGame: false });
       return false;
     }
   },
@@ -289,7 +335,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const signedPlayer: Player = {
       ...player,
       isClient: true,
-      agentId: AGENCY_ID,
+      agentId: GAME_CONFIG.AGENCY_ID,
       status: 'active',
     };
 
@@ -375,11 +421,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     let myPlayers = evolveAllPlayers(state.myPlayers);
     let scoutedPlayers = evolveAllPlayers(state.scoutedPlayers);
+    let worldPlayers = evolveAllPlayers(state.worldPlayers);
 
     const isSeasonEnd = nextWeek > WEEKS_PER_SEASON;
     if (isSeasonEnd) {
       myPlayers = ageAllPlayers(myPlayers);
       scoutedPlayers = ageAllPlayers(scoutedPlayers);
+      worldPlayers = ageAllPlayers(worldPlayers);
       nextWeek = 1;
       nextSeason += 1;
 
@@ -412,6 +460,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       agencyBudget: nextBudget,
       myPlayers,
       scoutedPlayers,
+      worldPlayers,
       messages,
       totalRevenue: nextRevenue,
       totalExpenses: nextExpenses,
@@ -447,7 +496,7 @@ export function isTabLockedDuringTutorial(
   return false;
 }
 
-export type PlayerSource = 'client' | 'scouted';
+export type PlayerSource = 'client' | 'scouted' | 'world';
 
 export function findPlayerById(playerId: string): { player: Player; source: PlayerSource } | null {
   const state = useGameStore.getState();
@@ -455,5 +504,24 @@ export function findPlayerById(playerId: string): { player: Player; source: Play
   if (client) return { player: client, source: 'client' };
   const scouted = state.scoutedPlayers.find((p) => p.id === playerId);
   if (scouted) return { player: scouted, source: 'scouted' };
+  const world = state.worldPlayers.find((p) => p.id === playerId);
+  if (world) return { player: world, source: 'world' };
   return null;
+}
+
+/** Joueurs du marché mondial (hors clients et hors tournois locaux). */
+export function getWorldMarketPlayers(agencyCountryCode?: string): Player[] {
+  const state = useGameStore.getState();
+  const code = agencyCountryCode ?? state.agencyCountryCode;
+  const clientIds = new Set(state.myPlayers.map((p) => p.id));
+  const scoutedIds = new Set(state.scoutedPlayers.map((p) => p.id));
+
+  return state.worldPlayers.filter(
+    (p) =>
+      !p.isClient &&
+      !clientIds.has(p.id) &&
+      !scoutedIds.has(p.id) &&
+      p.contract.clubId !== null &&
+      state.clubs.find((c) => c.id === p.contract.clubId)?.countryCode === code,
+  );
 }

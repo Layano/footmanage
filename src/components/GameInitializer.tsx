@@ -1,25 +1,31 @@
 import { useEffect } from 'react';
+import { useRouter } from 'expo-router';
 
 import { clearLegacySaves } from '@/store/saveMigration';
 import { useGameStore } from '@/store/useGameStore';
 
-/** Charge une sauvegarde existante ou démarre une nouvelle partie au lancement. */
+/** Charge une sauvegarde existante au lancement — sinon redirige vers nouvelle partie. */
 export function GameInitializer() {
+  const router = useRouter();
   const isHydrated = useGameStore((s) => s.isHydrated);
+  const hasActiveGame = useGameStore((s) => s.hasActiveGame);
   const loadGame = useGameStore((s) => s.loadGame);
-  const initNewGame = useGameStore((s) => s.initNewGame);
 
   useEffect(() => {
     if (isHydrated) return;
 
     (async () => {
       await clearLegacySaves();
-      const loaded = await loadGame();
-      if (!loaded) {
-        await initNewGame();
-      }
+      await loadGame();
     })();
-  }, [isHydrated, loadGame, initNewGame]);
+  }, [isHydrated, loadGame]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    if (!hasActiveGame) {
+      router.replace('/new-game');
+    }
+  }, [isHydrated, hasActiveGame, router]);
 
   return null;
 }

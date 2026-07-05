@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,7 +15,7 @@ import { GAME_CONFIG } from '@/constants/gameConfig';
 import { theme } from '@/constants/theme';
 import { isNeighborhoodAmateur } from '@/engine/players/amateurGenerator';
 import { estimatePotential, overallToDisplay } from '@/engine/players/potentialEstimate';
-import { getClubFromStore, useGameStore } from '@/store/useGameStore';
+import { getClubFromStore, getWorldMarketPlayers, useGameStore } from '@/store/useGameStore';
 import { getPlayerTeamLabel } from '@/utils/playerDisplay';
 import { PLAYER_POSITION_LABELS } from '@/types';
 
@@ -31,6 +31,16 @@ export default function ScoutingScreen() {
   const scoutNeighborhoodTournament = useGameStore((s) => s.scoutNeighborhoodTournament);
   const signAmateurPlayer = useGameStore((s) => s.signAmateurPlayer);
   const setTutorialStep = useGameStore((s) => s.setTutorialStep);
+  const agencyCountryCode = useGameStore((s) => s.agencyCountryCode);
+
+  const [view, setView] = useState<'local' | 'market'>('local');
+
+  const marketPlayers = useMemo(
+    () => getWorldMarketPlayers(agencyCountryCode).slice(0, 40),
+    [agencyCountryCode, scoutedPlayers.length],
+  );
+
+  const displayPlayers = view === 'local' ? scoutedPlayers : marketPlayers;
 
   useEffect(() => {
     if (isTutorialActive && tutorialStep === 1) {
@@ -84,16 +94,34 @@ export default function ScoutingScreen() {
         </Text>
       </Pressable>
 
-      {scoutedPlayers.length === 0 ? (
+      <View style={styles.tabRow}>
+        <Pressable
+          style={[styles.tab, view === 'local' && styles.tabActive]}
+          onPress={() => setView('local')}>
+          <Text style={[styles.tabText, view === 'local' && styles.tabTextActive]}>
+            Prospects locaux
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.tab, view === 'market' && styles.tabActive]}
+          onPress={() => setView('market')}>
+          <Text style={[styles.tabText, view === 'market' && styles.tabTextActive]}>
+            Marché national
+          </Text>
+        </Pressable>
+      </View>
+
+      {displayPlayers.length === 0 ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyText}>
-            Aucun joueur repéré. Participez à un tournoi de quartier pour découvrir des talents
-            locaux.
+            {view === 'local'
+              ? 'Aucun prospect local. Participez à un tournoi de quartier.'
+              : 'Aucun joueur disponible sur le marché national pour le moment.'}
           </Text>
         </View>
       ) : (
         <FlatList
-          data={scoutedPlayers}
+          data={displayPlayers}
           keyExtractor={(item) => item.id}
           style={styles.list}
           contentContainerStyle={styles.listContent}
@@ -176,6 +204,32 @@ const styles = StyleSheet.create({
   tournamentDetails: {
     fontSize: 13,
     color: theme.colors.textMuted,
+  },
+  tabRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: 'center',
+    backgroundColor: theme.colors.surface,
+  },
+  tabActive: {
+    borderColor: theme.colors.primary,
+    backgroundColor: theme.colors.surfaceLight,
+  },
+  tabText: {
+    fontSize: 13,
+    color: theme.colors.textMuted,
+  },
+  tabTextActive: {
+    color: theme.colors.primary,
+    fontWeight: '600',
   },
   emptyState: {
     flex: 1,
