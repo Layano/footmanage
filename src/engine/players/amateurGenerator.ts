@@ -5,6 +5,14 @@ import type { OutfieldPlayer } from '../../types/player';
 import type { PlayerPosition } from '../../types/positions';
 
 const FIRST_NAMES = ['Lucas', 'Noah', 'Ethan', 'Yanis', 'Tom', 'Axel', 'Rayan', 'Nolan', 'Léo', 'Mael'];
+const JUNIOR_CLUBS = [
+  'AS Montreuil U17',
+  'FC Seine U16',
+  'US Banlieue U17',
+  'Entente Sud U17',
+  'Olympique Est U16',
+  'RC Pavillon U17',
+];
 const LAST_NAMES = ['Martin', 'Bernard', 'Petit', 'Robert', 'Richard', 'Durand', 'Moreau', 'Simon', 'Laurent', 'Garcia'];
 const POSITIONS: Exclude<PlayerPosition, 'GK'>[] = ['ST', 'WING', 'AM', 'DM', 'CB', 'FB'];
 const NATIONALITIES = ['France', 'France', 'France', 'Belgique', 'Sénégal', 'Maroc'];
@@ -77,6 +85,7 @@ export function generateNeighborhoodAmateurs(
     const potentialDisplay = isGem ? gemPotentialDisplay : lowPotentialDisplay;
     const potentialRating = potentialDisplayToRating(potentialDisplay);
 
+    const juniorClub = JUNIOR_CLUBS[randomInt(0, JUNIOR_CLUBS.length - 1)];
     const id = `amateur-${season}-${week}-${Date.now()}-${index}`;
 
     return {
@@ -86,6 +95,7 @@ export function generateNeighborhoodAmateurs(
       displayName: `${firstName.charAt(0)}. ${lastName}`,
       age,
       nationality: NATIONALITIES[randomInt(0, NATIONALITIES.length - 1)],
+      currentTeam: `${juniorClub} · Ligue Junior`,
       position,
       preferredFoot: Math.random() > 0.5 ? 'right' : 'left',
       attributes,

@@ -1,4 +1,5 @@
-import { useCallback } from 'react';
+import { useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
@@ -6,6 +7,9 @@ import { theme } from '@/constants/theme';
 import { formatGameDate, useGameStore } from '@/store/useGameStore';
 
 export default function DashboardScreen() {
+  const router = useRouter();
+  const [isAdvancing, setIsAdvancing] = useState(false);
+
   const isHydrated = useGameStore((s) => s.isHydrated);
   const currentWeek = useGameStore((s) => s.currentWeek);
   const currentSeason = useGameStore((s) => s.currentSeason);
@@ -14,12 +18,32 @@ export default function DashboardScreen() {
   const myPlayers = useGameStore((s) => s.myPlayers);
   const messages = useGameStore((s) => s.messages);
   const isTutorialActive = useGameStore((s) => s.isTutorialActive);
+  const tutorialStep = useGameStore((s) => s.tutorialStep);
   const advanceTime = useGameStore((s) => s.advanceTime);
   const resetGame = useGameStore((s) => s.resetGame);
 
-  const handleAdvanceTime = useCallback(() => {
-    void advanceTime();
-  }, [advanceTime]);
+  const handleAdvanceTime = useCallback(async () => {
+    if (isTutorialActive && tutorialStep < 3) {
+      Alert.alert(
+        'Tutoriel en cours',
+        "Terminez d'abord le tutoriel dans l'onglet Scouting (signez votre premier joueur).",
+        [{ text: 'Aller au Scouting', onPress: () => router.push('/(tabs)/scouting') }],
+      );
+      return;
+    }
+
+    setIsAdvancing(true);
+    try {
+      await advanceTime();
+      const state = useGameStore.getState();
+      Alert.alert(
+        'Temps avancé',
+        `Nous sommes maintenant en ${formatGameDate(state.currentWeek, state.currentSeason)}.`,
+      );
+    } finally {
+      setIsAdvancing(false);
+    }
+  }, [advanceTime, isTutorialActive, tutorialStep, router]);
 
   const handleResetGame = useCallback(() => {
     Alert.alert(
@@ -48,7 +72,8 @@ export default function DashboardScreen() {
   return (
     <ScreenContainer
       title="Tableau de bord"
-      subtitle={`${agency.name} — ${formatGameDate(currentWeek, currentSeason)}`}>
+      subtitle={`${agency.name} — ${formatGameDate(currentWeek, currentSeason)}`}
+      scrollable>
       <View style={styles.card}>
         <Text style={styles.cardLabel}>Trésorerie</Text>
         <Text style={styles.cardValue}>{agencyBudget.toLocaleString('fr-FR')} €</Text>
@@ -78,13 +103,18 @@ export default function DashboardScreen() {
         )}
       </View>
 
-      <Pressable style={styles.button} onPress={handleAdvanceTime}>
-        <Text style={styles.buttonText}>⏩ Avancer le temps (+1 semaine)</Text>
+      <Pressable
+        style={[styles.button, isAdvancing && styles.buttonDisabled]}
+        onPress={() => void handleAdvanceTime()}
+        disabled={isAdvancing}>
+        <Text style={styles.buttonText}>
+          {isAdvancing ? 'Simulation…' : '⏩ Avancer le temps (+1 semaine)'}
+        </Text>
       </Pressable>
 
       {isTutorialActive ? (
         <Text style={styles.tutorialHint}>
-          Tutoriel en cours — suivez les instructions dans l'onglet Scouting.
+          Tutoriel en cours — signez un joueur dans Scouting pour débloquer le tableau de bord.
         </Text>
       ) : null}
 
@@ -149,7 +179,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: theme.spacing.md,
     alignItems: 'center',
-    marginTop: 'auto',
+    marginTop: theme.spacing.sm,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   buttonText: {
     color: theme.colors.text,

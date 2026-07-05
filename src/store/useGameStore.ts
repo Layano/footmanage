@@ -10,6 +10,7 @@ import {
   agePlayerByOneYear,
   tryWeeklyPlayerEvolution,
 } from '@/engine/simulation/evolutionEngine';
+import { clearAllSaves } from '@/store/saveMigration';
 import type { Agency } from '@/types/agency';
 import type { Club } from '@/types/club';
 import type { GameMessage } from '@/types/game';
@@ -48,6 +49,7 @@ interface GameStore extends PersistedGameState {
   signAmateurPlayer: (playerId: string) => Promise<boolean>;
   setTutorialStep: (step: number) => void;
   resetGame: () => Promise<void>;
+  revealPlayerScouting: (playerId: string) => void;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -170,7 +172,16 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
   };
 }
 
-import { clearAllSaves } from '@/store/saveMigration';
+function updatePlayerInLists(
+  state: PersistedGameState,
+  playerId: string,
+  updater: (player: Player) => Player,
+): Pick<PersistedGameState, 'myPlayers' | 'scoutedPlayers'> {
+  return {
+    myPlayers: state.myPlayers.map((p) => (p.id === playerId ? updater(p) : p)),
+    scoutedPlayers: state.scoutedPlayers.map((p) => (p.id === playerId ? updater(p) : p)),
+  };
+}
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
@@ -317,6 +328,27 @@ export const useGameStore = create<GameStore>((set, get) => ({
     return true;
   },
 
+  revealPlayerScouting: (playerId: string) => {
+    const state = get();
+    const scoutBonus = state.staff
+      .filter((s) => s.role === 'scout')
+      .reduce((max, s) => Math.max(max, (s.bonuses.potentialRevealBonus ?? 10) + s.level * 8), 0);
+
+    if (scoutBonus === 0) return;
+
+    const lists = updatePlayerInLists(state, playerId, (player) => ({
+      ...player,
+      potential: {
+        ...player.potential,
+        revealedPercent: Math.min(100, player.potential.revealedPercent + Math.round(scoutBonus / 2)),
+      },
+    }));
+
+    const nextState = { ...state, ...lists };
+    set({ ...nextState, agency: syncAgency(nextState) });
+    void get().saveGame();
+  },
+
   advanceTime: async () => {
     const state = get();
     let nextWeek = state.currentWeek + 1;
@@ -404,13 +436,24 @@ export function formatGameDate(week: number, season: number): string {
   return `Semaine ${week} — Saison ${season}/${season + 1}`;
 }
 
-/** Pendant le tutoriel, seul l'onglet Scouting est accessible (étapes 1 à 3). */
+/** Pendant le tutoriel, seuls Scouting (étapes 1–2) puis tous les onglets (étape 3+) sont accessibles. */
 export function isTabLockedDuringTutorial(
   tabName: 'index' | 'players' | 'scouting' | 'finance',
   isTutorialActive: boolean,
   tutorialStep: number,
 ): boolean {
   if (!isTutorialActive || tutorialStep < 1) return false;
-  if (tutorialStep <= 3) return tabName !== 'scouting';
+  if (tutorialStep <= 2) return tabName !== 'scouting';
   return false;
+}
+
+export type PlayerSource = 'client' | 'scouted';
+
+export function findPlayerById(playerId: string): { player: Player; source: PlayerSource } | null {
+  const state = useGameStore.getState();
+  const client = state.myPlayers.find((p) => p.id === playerId);
+  if (client) return { player: client, source: 'client' };
+  const scouted = state.scoutedPlayers.find((p) => p.id === playerId);
+  if (scouted) return { player: scouted, source: 'scouted' };
+  return null;
 }

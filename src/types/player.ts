@@ -56,8 +56,10 @@ interface PlayerBase {
   form: number;
   /** Note globale affichée (1–99), recalculée à chaque évolution d'attributs. */
   overallRating: number;
-  /** Plafond de note globale estimé (1–99), lié au potentiel caché. */
+  /** Plafond de note globale estimé (1–99), lié au potentiel caché — jamais affiché tel quel. */
   potentialRating: number;
+  /** Équipe actuelle affichée (ex: "AS Montreuil U17 · Ligue Junior"). */
+  currentTeam?: string;
 }
 
 export interface OutfieldPlayer extends PlayerBase {

@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { useEffect } from 'react';
 import {
   ActivityIndicator,
@@ -13,13 +14,18 @@ import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { GAME_CONFIG } from '@/constants/gameConfig';
 import { theme } from '@/constants/theme';
 import { isNeighborhoodAmateur } from '@/engine/players/amateurGenerator';
+import { estimatePotential, overallToDisplay } from '@/engine/players/potentialEstimate';
 import { getClubFromStore, useGameStore } from '@/store/useGameStore';
+import { getPlayerTeamLabel } from '@/utils/playerDisplay';
 import { PLAYER_POSITION_LABELS } from '@/types';
 
 export default function ScoutingScreen() {
+  const router = useRouter();
+
   const isHydrated = useGameStore((s) => s.isHydrated);
   const scoutedPlayers = useGameStore((s) => s.scoutedPlayers);
   const agencyBudget = useGameStore((s) => s.agencyBudget);
+  const staff = useGameStore((s) => s.staff);
   const isTutorialActive = useGameStore((s) => s.isTutorialActive);
   const tutorialStep = useGameStore((s) => s.tutorialStep);
   const scoutNeighborhoodTournament = useGameStore((s) => s.scoutNeighborhoodTournament);
@@ -89,26 +95,38 @@ export default function ScoutingScreen() {
         <FlatList
           data={scoutedPlayers}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.list}
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
           renderItem={({ item }) => {
             const club = getClubFromStore(item.contract.clubId);
             const signable = isNeighborhoodAmateur(item);
             const highlightSign = isTutorialActive && tutorialStep === 3 && signable;
+            const potential = estimatePotential(item, staff);
+            const teamLabel = getPlayerTeamLabel(item, club);
 
             return (
               <View style={[styles.card, highlightSign && styles.cardHighlight]}>
-                <View style={styles.cardHeader}>
-                  <Text style={styles.playerName}>{item.displayName}</Text>
-                  <Text style={styles.rating}>{item.overallRating}</Text>
-                </View>
-                <Text style={styles.details}>
-                  {PLAYER_POSITION_LABELS[item.position]} · {item.age} ans ·{' '}
-                  {item.status === 'free_agent' ? 'Sans club' : (club?.name ?? '—')}
-                </Text>
-                <Text style={styles.potential}>
-                  Potentiel estimé : {Math.round(item.potentialRating / 5)}/20 (
-                  {item.potential.revealedPercent}% découvert)
-                </Text>
+                <Pressable onPress={() => router.push(`/player/${item.id}`)}>
+                  <View style={styles.cardHeader}>
+                    <Text style={styles.playerName}>{item.displayName}</Text>
+                    <Text style={styles.rating}>{overallToDisplay(item.overallRating)}/20</Text>
+                  </View>
+                  <Text style={styles.details}>
+                    {PLAYER_POSITION_LABELS[item.position]} · {item.age} ans · {item.nationality}
+                  </Text>
+                  <Text style={styles.team}>🏟️ {teamLabel}</Text>
+                  <Text style={styles.potential}>
+                    {potential.stars} {potential.label}
+                  </Text>
+                  {potential.rangeText ? (
+                    <Text style={styles.potentialRange}>{potential.rangeText}</Text>
+                  ) : (
+                    <Text style={styles.potentialHint}>
+                      {potential.hint ?? 'Tapez pour voir la fiche complète'}
+                    </Text>
+                  )}
+                  <Text style={styles.viewDetail}>Voir la fiche →</Text>
+                </Pressable>
 
                 {signable ? (
                   <Pressable
@@ -116,11 +134,7 @@ export default function ScoutingScreen() {
                     onPress={() => void handleSign(item.id, item.displayName)}>
                     <Text style={styles.signButtonText}>✍️ Signer (gratuit)</Text>
                   </Pressable>
-                ) : (
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>Prospect</Text>
-                  </View>
-                )}
+                ) : null}
               </View>
             );
           }}
@@ -176,6 +190,9 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   list: {
+    flex: 1,
+  },
+  listContent: {
     gap: theme.spacing.sm,
     paddingBottom: theme.spacing.lg,
   },
@@ -211,25 +228,36 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     marginBottom: theme.spacing.xs,
   },
+  team: {
+    fontSize: 14,
+    color: theme.colors.text,
+    marginBottom: theme.spacing.xs,
+  },
   potential: {
+    fontSize: 14,
+    color: theme.colors.primary,
+    fontWeight: '600',
+    marginBottom: theme.spacing.xs,
+  },
+  potentialRange: {
     fontSize: 13,
     color: theme.colors.textMuted,
     marginBottom: theme.spacing.sm,
   },
-  badge: {
-    alignSelf: 'flex-start',
-    backgroundColor: theme.colors.surfaceLight,
-    borderRadius: 6,
-    paddingHorizontal: theme.spacing.sm,
-    paddingVertical: theme.spacing.xs,
-  },
-  badgeText: {
+  potentialHint: {
     fontSize: 12,
-    color: theme.colors.primary,
-    fontWeight: '600',
+    color: theme.colors.textMuted,
+    fontStyle: 'italic',
+    marginBottom: theme.spacing.sm,
+  },
+  viewDetail: {
+    fontSize: 13,
+    color: theme.colors.textMuted,
+    marginTop: theme.spacing.sm,
   },
   signButton: {
     alignSelf: 'flex-start',
+    marginTop: theme.spacing.sm,
     backgroundColor: theme.colors.primary,
     borderRadius: 8,
     paddingHorizontal: theme.spacing.md,

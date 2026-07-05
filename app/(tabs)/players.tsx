@@ -1,11 +1,15 @@
-import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { theme } from '@/constants/theme';
+import { overallToDisplay } from '@/engine/players/potentialEstimate';
 import { getClubFromStore, useGameStore } from '@/store/useGameStore';
+import { getPlayerTeamLabel } from '@/utils/playerDisplay';
 import { PLAYER_POSITION_LABELS } from '@/types';
 
 export default function PlayersScreen() {
+  const router = useRouter();
   const isHydrated = useGameStore((s) => s.isHydrated);
   const myPlayers = useGameStore((s) => s.myPlayers);
 
@@ -24,23 +28,32 @@ export default function PlayersScreen() {
       <FlatList
         data={myPlayers}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        ListEmptyComponent={
+          <Text style={styles.empty}>Aucun client pour le moment. Recrutez via le Scouting.</Text>
+        }
         renderItem={({ item }) => {
           const club = getClubFromStore(item.contract.clubId);
+          const teamLabel = getPlayerTeamLabel(item, club);
+
           return (
-            <View style={styles.card}>
+            <Pressable
+              style={styles.card}
+              onPress={() => router.push(`/player/${item.id}`)}>
               <View style={styles.cardHeader}>
                 <Text style={styles.playerName}>{item.displayName}</Text>
-                <Text style={styles.rating}>{item.overallRating}</Text>
+                <Text style={styles.rating}>{overallToDisplay(item.overallRating)}/20</Text>
               </View>
               <Text style={styles.details}>
-                {PLAYER_POSITION_LABELS[item.position]} · {item.age} ans ·{' '}
-                {club?.name ?? 'Sans club'}
+                {PLAYER_POSITION_LABELS[item.position]} · {item.age} ans · {item.nationality}
               </Text>
+              <Text style={styles.team}>🏟️ {teamLabel}</Text>
               <Text style={styles.value}>
                 Valeur : {item.marketValue.toLocaleString('fr-FR')} €
               </Text>
-            </View>
+              <Text style={styles.viewDetail}>Voir la fiche →</Text>
+            </Pressable>
           );
         }}
       />
@@ -56,7 +69,17 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background,
   },
   list: {
+    flex: 1,
+  },
+  listContent: {
     gap: theme.spacing.sm,
+    paddingBottom: theme.spacing.lg,
+  },
+  empty: {
+    fontSize: 14,
+    color: theme.colors.textMuted,
+    textAlign: 'center',
+    marginTop: theme.spacing.xl,
   },
   card: {
     backgroundColor: theme.colors.surface,
@@ -86,7 +109,17 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
     marginBottom: theme.spacing.xs,
   },
+  team: {
+    fontSize: 14,
+    color: theme.colors.text,
+    marginBottom: theme.spacing.xs,
+  },
   value: {
+    fontSize: 13,
+    color: theme.colors.textMuted,
+    marginBottom: theme.spacing.xs,
+  },
+  viewDetail: {
     fontSize: 13,
     color: theme.colors.textMuted,
   },
