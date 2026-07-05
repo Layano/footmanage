@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 
+import { SigningNegotiationPanel } from '@/components/negotiation/SigningNegotiationPanel';
 import { PlayerAttributesPanel } from '@/components/players/PlayerAttributesPanel';
 import { theme } from '@/constants/theme';
 import { isNeighborhoodAmateur } from '@/engine/players/amateurGenerator';
@@ -28,8 +29,11 @@ export default function PlayerDetailScreen() {
 
   const isHydrated = useGameStore((s) => s.isHydrated);
   const staff = useGameStore((s) => s.staff);
+  const agencyBudget = useGameStore((s) => s.agencyBudget);
   const signAmateurPlayer = useGameStore((s) => s.signAmateurPlayer);
   const revealPlayerScouting = useGameStore((s) => s.revealPlayerScouting);
+
+  const [showNegotiation, setShowNegotiation] = useState(false);
 
   const found = id ? findPlayerById(id) : null;
   const player = found?.player;
@@ -53,15 +57,6 @@ export default function PlayerDetailScreen() {
   const potential = estimatePotential(player, staff);
   const teamLabel = getPlayerTeamLabel(player, club);
   const signable = found?.source === 'scouted' && isNeighborhoodAmateur(player);
-
-  const handleSign = async () => {
-    const success = await signAmateurPlayer(player.id);
-    if (success) {
-      Alert.alert('Joueur signé !', `${player.displayName} rejoint votre agence.`, [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
-    }
-  };
 
   return (
     <>
@@ -92,6 +87,9 @@ export default function PlayerDetailScreen() {
               </Text>
             </View>
           </View>
+          {player.scoutedFromCity ? (
+            <Text style={styles.scoutedCity}>📍 Repéré à {player.scoutedFromCity}</Text>
+          ) : null}
         </View>
 
         <View style={styles.potentialCard}>
@@ -107,11 +105,27 @@ export default function PlayerDetailScreen() {
         <PlayerAttributesPanel player={player} />
 
         {signable ? (
-          <Pressable style={styles.signButton} onPress={() => void handleSign()}>
-            <Text style={styles.signButtonText}>✍️ Signer ce joueur (gratuit)</Text>
+          <Pressable style={styles.signButton} onPress={() => setShowNegotiation(true)}>
+            <Text style={styles.signButtonText}>✍️ Négocier le contrat</Text>
           </Pressable>
         ) : null}
       </ScrollView>
+
+      <SigningNegotiationPanel
+        visible={showNegotiation}
+        player={player}
+        agencyBudget={agencyBudget}
+        onClose={() => setShowNegotiation(false)}
+        onSign={async (offer) => {
+          const result = await signAmateurPlayer(player.id, offer);
+          if (result.success) {
+            Alert.alert('Joueur signé !', `${player.displayName} rejoint votre agence.`, [
+              { text: 'OK', onPress: () => router.back() },
+            ]);
+          }
+          return result;
+        }}
+      />
     </>
   );
 }
@@ -171,6 +185,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: theme.colors.text,
+  },
+  scoutedCity: {
+    fontSize: 14,
+    color: theme.colors.primary,
+    marginTop: theme.spacing.sm,
   },
   potentialCard: {
     backgroundColor: theme.colors.surface,

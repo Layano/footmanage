@@ -1,21 +1,15 @@
 import { calculateOverallRating } from '../players/ratingEngine';
+import {
+  buildJuniorClubLabel,
+  getAmateurNationality,
+  pickAmateurName,
+} from '../../data/world/amateurPools';
 import { GAME_CONFIG } from '../../constants/gameConfig';
 import type { OutfieldPlayerAttributes } from '../../types/attributes';
 import type { OutfieldPlayer } from '../../types/player';
 import type { PlayerPosition } from '../../types/positions';
 
-const FIRST_NAMES = ['Lucas', 'Noah', 'Ethan', 'Yanis', 'Tom', 'Axel', 'Rayan', 'Nolan', 'Léo', 'Mael'];
-const JUNIOR_CLUBS = [
-  'AS Montreuil U17',
-  'FC Seine U16',
-  'US Banlieue U17',
-  'Entente Sud U17',
-  'Olympique Est U16',
-  'RC Pavillon U17',
-];
-const LAST_NAMES = ['Martin', 'Bernard', 'Petit', 'Robert', 'Richard', 'Durand', 'Moreau', 'Simon', 'Laurent', 'Garcia'];
 const POSITIONS: Exclude<PlayerPosition, 'GK'>[] = ['ST', 'WING', 'AM', 'DM', 'CB', 'FB'];
-const NATIONALITIES = ['France', 'France', 'France', 'Belgique', 'Sénégal', 'Maroc'];
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -58,19 +52,26 @@ function potentialDisplayToRating(display: number): number {
   return Math.round((display / 20) * 98) + 1;
 }
 
+export interface AmateurGenerationOptions {
+  countryCode: string;
+  tournamentCity: string;
+}
+
 /**
- * Génère 3 jeunes amateurs repérés lors d'un tournoi de quartier.
- * L'un d'eux possède un potentiel caché intéressant.
+ * Génère des jeunes amateurs repérés lors d'un tournoi de quartier.
+ * Les joueurs sont du pays de l'agence et proviennent de la ville du tournoi.
  */
 export function generateNeighborhoodAmateurs(
   week: number,
   season: number,
+  options: AmateurGenerationOptions,
 ): OutfieldPlayer[] {
+  const { countryCode, tournamentCity } = options;
+  const nationality = getAmateurNationality(countryCode);
   const gemIndex = randomInt(0, GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_PLAYERS - 1);
 
   return Array.from({ length: GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_PLAYERS }, (_, index) => {
-    const firstName = FIRST_NAMES[randomInt(0, FIRST_NAMES.length - 1)];
-    const lastName = LAST_NAMES[randomInt(0, LAST_NAMES.length - 1)];
+    const { firstName, lastName } = pickAmateurName(countryCode);
     const position = POSITIONS[randomInt(0, POSITIONS.length - 1)];
     const age = randomInt(15, 17);
     const attributes = buildAmateurAttributes();
@@ -85,7 +86,7 @@ export function generateNeighborhoodAmateurs(
     const potentialDisplay = isGem ? gemPotentialDisplay : lowPotentialDisplay;
     const potentialRating = potentialDisplayToRating(potentialDisplay);
 
-    const juniorClub = JUNIOR_CLUBS[randomInt(0, JUNIOR_CLUBS.length - 1)];
+    const juniorClub = buildJuniorClubLabel(tournamentCity, age);
     const id = `amateur-${season}-${week}-${Date.now()}-${index}`;
 
     return {
@@ -94,8 +95,9 @@ export function generateNeighborhoodAmateurs(
       lastName,
       displayName: `${firstName.charAt(0)}. ${lastName}`,
       age,
-      nationality: NATIONALITIES[randomInt(0, NATIONALITIES.length - 1)],
+      nationality,
       currentTeam: `${juniorClub} · Ligue Junior`,
+      scoutedFromCity: tournamentCity,
       position,
       preferredFoot: Math.random() > 0.5 ? 'right' : 'left',
       attributes,
@@ -120,7 +122,7 @@ export function generateNeighborhoodAmateurs(
   });
 }
 
-/** Indique si un joueur est un amateur signable gratuitement (tournoi de quartier). */
+/** Indique si un joueur est un amateur signable (tournoi de quartier). */
 export function isNeighborhoodAmateur(player: { contract: { clubId: string | null }; age: number }): boolean {
   return player.contract.clubId === null && player.age <= 17;
 }

@@ -3,6 +3,7 @@ import type {
   OutfieldPlayerAttributes,
   PlayerAttributes,
 } from './attributes';
+import type { AgentRepresentationContract } from './agentContract';
 import type { PlayerPosition } from './positions';
 
 export type { PlayerAttributes, OutfieldPlayerAttributes, GoalkeeperPlayerAttributes };
@@ -60,6 +61,10 @@ interface PlayerBase {
   potentialRating: number;
   /** Équipe actuelle affichée (ex: "AS Montreuil U17 · Ligue Junior"). */
   currentTeam?: string;
+  /** Ville où le joueur a été repéré (tournoi de quartier). */
+  scoutedFromCity?: string;
+  /** Contrat de représentation avec l'agence (si client). */
+  representationContract?: AgentRepresentationContract;
 }
 
 export interface OutfieldPlayer extends PlayerBase {

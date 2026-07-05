@@ -1,8 +1,8 @@
 import { useRouter, useSegments } from 'expo-router';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { GAME_CONFIG } from '@/constants/gameConfig';
 import { theme } from '@/constants/theme';
+import { getCountryByCode } from '@/data/world/countries';
 import { useGameStore } from '@/store/useGameStore';
 
 const TUTORIAL_STEPS: Record<number, { title: string; body: string; actionLabel?: string }> = {
@@ -12,13 +12,13 @@ const TUTORIAL_STEPS: Record<number, { title: string; body: string; actionLabel?
     actionLabel: 'Aller au Scouting',
   },
   2: {
-    title: 'Pas de recruteur professionnel',
-    body: "Utilisez les tournois de quartier pour repérer des jeunes talents sans recruteur.",
-    actionLabel: 'Aller aux tournois de quartier',
+    title: 'Tournoi de quartier',
+    body: 'Un tournoi se tient dans votre ville. Déplacez-vous pour repérer des jeunes talents locaux.',
+    actionLabel: 'Participer au tournoi',
   },
   3: {
-    title: 'Signez votre premier joueur !',
-    body: "Super ! Regardez les stats et signez un joueur gratuitement (ils n'ont pas de club).",
+    title: 'Négociez votre premier contrat !',
+    body: "Ouvrez la négociation avec un joueur repéré : commissions, prime de signature et sponsoring.",
   },
 };
 
@@ -28,16 +28,21 @@ export function TutorialOverlay() {
   const isTutorialActive = useGameStore((s) => s.isTutorialActive);
   const tutorialStep = useGameStore((s) => s.tutorialStep);
   const agencyBudget = useGameStore((s) => s.agencyBudget);
+  const agencyCountryCode = useGameStore((s) => s.agencyCountryCode);
+  const currentTournament = useGameStore((s) => s.currentTournament);
+  const agencyCity = useGameStore((s) => s.agency.office.city);
   const scoutNeighborhoodTournament = useGameStore((s) => s.scoutNeighborhoodTournament);
 
   const isOnScouting = segments.includes('scouting');
   const content = TUTORIAL_STEPS[tutorialStep];
+  const travelCost = currentTournament?.travelCost ?? 0;
+  const tournamentCity = currentTournament?.city ?? agencyCity;
+  const countryName = getCountryByCode(agencyCountryCode)?.name ?? '';
 
   if (!isTutorialActive || !content) {
     return null;
   }
 
-  /** Étape 1 hors Scouting : overlay bloquant. Étapes 2–3 : bandeau non bloquant. */
   const isBlockingOverlay = tutorialStep === 1 && !isOnScouting;
 
   const handleGoToScouting = () => {
@@ -45,10 +50,10 @@ export function TutorialOverlay() {
   };
 
   const handleTournament = async () => {
-    if (agencyBudget < GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_COST) {
+    if (agencyBudget < travelCost) {
       Alert.alert(
         'Fonds insuffisants',
-        `Il vous faut au moins ${GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_COST} € pour vous déplacer.`,
+        `Il vous faut au moins ${travelCost} € pour vous rendre à ${tournamentCity}.`,
       );
       return;
     }
@@ -72,6 +77,12 @@ export function TutorialOverlay() {
         <Text style={styles.title}>{content.title}</Text>
         <Text style={styles.body}>{content.body}</Text>
 
+        {tutorialStep === 2 ? (
+          <Text style={styles.tournamentInfo}>
+            📍 {tournamentCity} ({countryName}) · Trajet : {travelCost} €
+          </Text>
+        ) : null}
+
         {tutorialStep === 1 && !isOnScouting && content.actionLabel ? (
           <Pressable style={styles.button} onPress={handleGoToScouting}>
             <Text style={styles.buttonText}>{content.actionLabel}</Text>
@@ -81,13 +92,13 @@ export function TutorialOverlay() {
         {tutorialStep === 2 && content.actionLabel ? (
           <Pressable style={styles.button} onPress={() => void handleTournament()}>
             <Text style={styles.buttonText}>
-              {content.actionLabel} ({GAME_CONFIG.NEIGHBORHOOD_TOURNAMENT_COST} €)
+              {content.actionLabel} ({travelCost} €)
             </Text>
           </Pressable>
         ) : null}
 
         {tutorialStep === 3 ? (
-          <Text style={styles.hint}>👆 Appuyez sur « Signer (gratuit) » sur un joueur ci-dessus.</Text>
+          <Text style={styles.hint}>👆 Appuyez sur « Négocier le contrat » sur un joueur ci-dessus.</Text>
         ) : null}
       </View>
     </View>
@@ -147,6 +158,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: theme.colors.textMuted,
     lineHeight: 22,
+    marginBottom: theme.spacing.md,
+  },
+  tournamentInfo: {
+    fontSize: 14,
+    color: theme.colors.warning,
     marginBottom: theme.spacing.md,
   },
   hint: {

@@ -54,11 +54,13 @@ export default function DashboardScreen() {
         {
           text: 'Recommencer',
           style: 'destructive',
-          onPress: () => void resetGame(),
+          onPress: () => {
+            void resetGame().then(() => router.replace('/new-game'));
+          },
         },
       ],
     );
-  }, [resetGame]);
+  }, [resetGame, router]);
 
   if (!isHydrated) {
     return (
