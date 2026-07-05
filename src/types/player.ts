@@ -65,6 +65,10 @@ interface PlayerBase {
   scoutedFromCity?: string;
   /** Contrat de représentation avec l'agence (si client). */
   representationContract?: AgentRepresentationContract;
+  /** Minutes jouées cette saison (développement). */
+  seasonMinutes: number;
+  /** Minutes jouées la semaine passée. */
+  weeklyMinutes: number;
 }
 
 export interface OutfieldPlayer extends PlayerBase {

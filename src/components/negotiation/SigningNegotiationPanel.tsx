@@ -16,6 +16,7 @@ import {
   getDefaultOffer,
   getPlayerDemands,
 } from '@/engine/negotiation/amateurNegotiation';
+import { getRequiredAgencyReputation } from '@/engine/simulation/reputationEngine';
 import type { NegotiationOffer } from '@/types/agentContract';
 import type { Player } from '@/types/player';
 
@@ -23,6 +24,7 @@ interface SigningNegotiationPanelProps {
   visible: boolean;
   player: Player | null;
   agencyBudget: number;
+  agencyReputation?: number;
   onClose: () => void;
   onSign: (offer: NegotiationOffer) => Promise<{ success: boolean; reason?: string }>;
 }
@@ -73,6 +75,7 @@ export function SigningNegotiationPanel({
   visible,
   player,
   agencyBudget,
+  agencyReputation = 5,
   onClose,
   onSign,
 }: SigningNegotiationPanelProps) {
@@ -82,17 +85,18 @@ export function SigningNegotiationPanel({
 
   useEffect(() => {
     if (player && visible) {
-      setOffer(getDefaultOffer(player));
+      setOffer(getDefaultOffer(player, agencyReputation));
       setFeedback(null);
     }
-  }, [player, visible]);
+  }, [player, visible, agencyReputation]);
 
   const preview = useMemo(() => {
     if (!player || !offer) return null;
-    return evaluateNegotiation(player, offer);
-  }, [player, offer]);
+    return evaluateNegotiation(player, offer, agencyReputation);
+  }, [player, offer, agencyReputation]);
 
-  const demands = player ? getPlayerDemands(player) : null;
+  const demands = player ? getPlayerDemands(player, agencyReputation) : null;
+  const requiredRep = player ? getRequiredAgencyReputation(player) : 0;
 
   if (!player || !offer || !demands) {
     return null;
@@ -122,6 +126,12 @@ export function SigningNegotiationPanel({
               {player.nationality} · {player.age} ans
               {player.scoutedFromCity ? ` · Repéré à ${player.scoutedFromCity}` : ''}
             </Text>
+            {agencyReputation < requiredRep ? (
+              <Text style={styles.repWarning}>
+                Réputation agence {agencyReputation}/100 — ce joueur exige ~{requiredRep} ou un contrat
+                très avantageux.
+              </Text>
+            ) : null}
 
             <View style={styles.demandsCard}>
               <Text style={styles.sectionTitle}>Exigences du joueur</Text>
@@ -248,6 +258,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: theme.colors.textMuted,
     marginBottom: theme.spacing.sm,
+  },
+  repWarning: {
+    fontSize: 13,
+    color: theme.colors.warning,
+    marginBottom: theme.spacing.sm,
+    lineHeight: 18,
   },
   sectionTitle: {
     fontSize: 14,

@@ -34,6 +34,7 @@ export default function ScoutingScreen() {
   const signAmateurPlayer = useGameStore((s) => s.signAmateurPlayer);
   const setTutorialStep = useGameStore((s) => s.setTutorialStep);
   const agencyCountryCode = useGameStore((s) => s.agencyCountryCode);
+  const agencyReputation = useGameStore((s) => s.agency.reputation);
   const currentTournament = useGameStore((s) => s.currentTournament);
   const agencyCity = useGameStore((s) => s.agency.office.city);
 

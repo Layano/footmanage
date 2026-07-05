@@ -8,7 +8,7 @@ import { useGameStore } from '@/store/useGameStore';
 const TUTORIAL_STEPS: Record<number, { title: string; body: string; actionLabel?: string }> = {
   1: {
     title: 'Bienvenue dans votre nouvelle agence !',
-    body: "Vous n'avez ni argent, ni client. Allez dans l'onglet Scouting pour commencer.",
+    body: "Votre boîte mail centralise les offres et événements. Commencez par l'onglet Scouting.",
     actionLabel: 'Aller au Scouting',
   },
   2: {

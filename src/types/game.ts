@@ -1,6 +1,19 @@
 export type GamePhase = 'pre_season' | 'in_season' | 'transfer_window' | 'off_season';
 
-export type GameMessageType = 'info' | 'transfer' | 'contract' | 'scout' | 'finance';
+export type GameMessageType =
+  | 'info'
+  | 'transfer'
+  | 'loan'
+  | 'contract'
+  | 'scout'
+  | 'finance'
+  | 'match';
+
+export type InboxAction =
+  | 'none'
+  | 'transfer_offer'
+  | 'loan_offer'
+  | 'match_invite';
 
 export interface GameMessage {
   id: string;
@@ -12,6 +25,9 @@ export interface GameMessage {
   createdAt: string;
   read: boolean;
   playerId?: string;
+  action: InboxAction;
+  offerId?: string;
+  matchId?: string;
 }
 
 export interface GameTime {

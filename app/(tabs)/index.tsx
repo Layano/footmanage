@@ -1,12 +1,64 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { theme } from '@/constants/theme';
-import { formatGameDate, useGameStore } from '@/store/useGameStore';
+import { getTransferWindowLabel } from '@/engine/simulation/transferWindow';
+import {
+  formatGameDate,
+  getUnreadMessageCount,
+  useGameStore,
+} from '@/store/useGameStore';
+import type { GameMessage } from '@/types/game';
 
-export default function DashboardScreen() {
+const TYPE_ICONS: Record<GameMessage['type'], string> = {
+  info: 'ℹ️',
+  transfer: '🔄',
+  loan: '📋',
+  contract: '📝',
+  scout: '🔍',
+  finance: '💰',
+  match: '⚽',
+};
+
+function MessageRow({
+  message,
+  onPress,
+}: {
+  message: GameMessage;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={[styles.messageRow, !message.read && styles.messageUnread]}
+      onPress={onPress}>
+      <Text style={styles.messageIcon}>{TYPE_ICONS[message.type]}</Text>
+      <View style={styles.messageContent}>
+        <Text style={[styles.messageTitle, !message.read && styles.messageTitleUnread]}>
+          {message.title}
+        </Text>
+        <Text style={styles.messageBody} numberOfLines={2}>
+          {message.body}
+        </Text>
+        <Text style={styles.messageMeta}>
+          Sem. {message.week} · {new Date(message.createdAt).toLocaleDateString('fr-FR')}
+        </Text>
+      </View>
+      {!message.read ? <View style={styles.unreadDot} /> : null}
+    </Pressable>
+  );
+}
+
+export default function InboxScreen() {
   const router = useRouter();
   const [isAdvancing, setIsAdvancing] = useState(false);
 
@@ -15,18 +67,41 @@ export default function DashboardScreen() {
   const currentSeason = useGameStore((s) => s.currentSeason);
   const agencyBudget = useGameStore((s) => s.agencyBudget);
   const agency = useGameStore((s) => s.agency);
-  const myPlayers = useGameStore((s) => s.myPlayers);
   const messages = useGameStore((s) => s.messages);
+  const agencyCountryCode = useGameStore((s) => s.agencyCountryCode);
+  const allLeagues = useGameStore((s) => s.leagues);
   const isTutorialActive = useGameStore((s) => s.isTutorialActive);
   const tutorialStep = useGameStore((s) => s.tutorialStep);
   const advanceTime = useGameStore((s) => s.advanceTime);
+  const markMessageRead = useGameStore((s) => s.markMessageRead);
   const resetGame = useGameStore((s) => s.resetGame);
+
+  const unreadCount = useMemo(() => getUnreadMessageCount(), [messages]);
+  const mercatoLabel = getTransferWindowLabel(currentWeek, allLeagues, agencyCountryCode);
+
+  const handleMessagePress = useCallback(
+    (message: GameMessage) => {
+      markMessageRead(message.id);
+      if (message.action === 'transfer_offer' || message.action === 'loan_offer') {
+        if (message.offerId) router.push(`/offer/${message.offerId}`);
+        return;
+      }
+      if (message.action === 'match_invite' && message.matchId) {
+        router.push(`/match/${message.matchId}`);
+        return;
+      }
+      if (message.playerId) {
+        router.push(`/player/${message.playerId}`);
+      }
+    },
+    [markMessageRead, router],
+  );
 
   const handleAdvanceTime = useCallback(async () => {
     if (isTutorialActive && tutorialStep < 3) {
       Alert.alert(
         'Tutoriel en cours',
-        "Terminez d'abord le tutoriel dans l'onglet Scouting (signez votre premier joueur).",
+        "Terminez d'abord le tutoriel dans l'onglet Scouting.",
         [{ text: 'Aller au Scouting', onPress: () => router.push('/(tabs)/scouting') }],
       );
       return;
@@ -36,92 +111,86 @@ export default function DashboardScreen() {
     try {
       await advanceTime();
       const state = useGameStore.getState();
-      Alert.alert(
-        'Temps avancé',
-        `Nous sommes maintenant en ${formatGameDate(state.currentWeek, state.currentSeason)}.`,
-      );
+      Alert.alert('Semaine suivante', formatGameDate(state.currentWeek, state.currentSeason));
     } finally {
       setIsAdvancing(false);
     }
   }, [advanceTime, isTutorialActive, tutorialStep, router]);
 
   const handleResetGame = useCallback(() => {
-    Alert.alert(
-      'Nouvelle partie',
-      'Recommencer depuis le début ? Votre progression actuelle sera effacée.',
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Recommencer',
-          style: 'destructive',
-          onPress: () => {
-            void resetGame().then(() => router.replace('/new-game'));
-          },
-        },
-      ],
-    );
+    Alert.alert('Nouvelle partie', 'Effacer la progression actuelle ?', [
+      { text: 'Annuler', style: 'cancel' },
+      {
+        text: 'Recommencer',
+        style: 'destructive',
+        onPress: () => void resetGame().then(() => router.replace('/new-game')),
+      },
+    ]);
   }, [resetGame, router]);
 
   if (!isHydrated) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
-        <Text style={styles.loadingText}>Chargement de la partie…</Text>
       </View>
     );
   }
 
   return (
     <ScreenContainer
-      title="Tableau de bord"
-      subtitle={`${agency.name} — ${formatGameDate(currentWeek, currentSeason)}`}
-      scrollable>
-      <View style={styles.card}>
-        <Text style={styles.cardLabel}>Trésorerie</Text>
-        <Text style={styles.cardValue}>{agencyBudget.toLocaleString('fr-FR')} €</Text>
-      </View>
-
-      <View style={styles.row}>
-        <View style={[styles.card, styles.halfCard]}>
-          <Text style={styles.cardLabel}>Clients actifs</Text>
-          <Text style={styles.cardValue}>{myPlayers.length}</Text>
+      title="Boîte mail"
+      subtitle={`${agency.name} · ${formatGameDate(currentWeek, currentSeason)}`}>
+      <View style={styles.statsRow}>
+        <View style={styles.statChip}>
+          <Text style={styles.statLabel}>Trésorerie</Text>
+          <Text style={styles.statValue}>{agencyBudget.toLocaleString('fr-FR')} €</Text>
         </View>
-        <View style={[styles.card, styles.halfCard]}>
-          <Text style={styles.cardLabel}>Réputation</Text>
-          <Text style={styles.cardValue}>{agency.reputation}/100</Text>
+        <View style={styles.statChip}>
+          <Text style={styles.statLabel}>Réputation</Text>
+          <Text style={styles.statValue}>{agency.reputation}/100</Text>
+        </View>
+        <View style={styles.statChip}>
+          <Text style={styles.statLabel}>Non lus</Text>
+          <Text style={styles.statValue}>{unreadCount}</Text>
         </View>
       </View>
 
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Messages récents</Text>
-        {messages.length === 0 ? (
-          <Text style={styles.message}>Aucun message pour le moment.</Text>
-        ) : (
-          messages.slice(0, 5).map((msg) => (
-            <Text key={msg.id} style={styles.message}>
-              📩 {msg.title} — {msg.body}
-            </Text>
-          ))
-        )}
-      </View>
+      {mercatoLabel ? (
+        <View style={styles.mercatoBanner}>
+          <Text style={styles.mercatoText}>📅 {mercatoLabel} — offres de transfert/prêt possibles</Text>
+        </View>
+      ) : null}
+
+      {messages.length === 0 ? (
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>Aucun message</Text>
+          <Text style={styles.emptyBody}>
+            Avancez le temps pour recevoir des offres mercato, des invitations match et des notifications.
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={messages}
+          keyExtractor={(item) => item.id}
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          renderItem={({ item }) => (
+            <MessageRow message={item} onPress={() => handleMessagePress(item)} />
+          )}
+        />
+      )}
 
       <Pressable
-        style={[styles.button, isAdvancing && styles.buttonDisabled]}
+        style={[styles.advanceBtn, isAdvancing && styles.advanceBtnDisabled]}
         onPress={() => void handleAdvanceTime()}
         disabled={isAdvancing}>
-        <Text style={styles.buttonText}>
+        <Text style={styles.advanceBtnText}>
           {isAdvancing ? 'Simulation…' : '⏩ Avancer le temps (+1 semaine)'}
         </Text>
       </Pressable>
 
-      {isTutorialActive ? (
-        <Text style={styles.tutorialHint}>
-          Tutoriel en cours — signez un joueur dans Scouting pour débloquer le tableau de bord.
-        </Text>
-      ) : null}
-
-      <Pressable style={styles.resetButton} onPress={handleResetGame}>
-        <Text style={styles.resetButtonText}>🔄 Nouvelle partie</Text>
+      <Pressable style={styles.resetBtn} onPress={handleResetGame}>
+        <Text style={styles.resetBtnText}>🔄 Nouvelle partie</Text>
       </Pressable>
     </ScreenContainer>
   );
@@ -133,77 +202,135 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: theme.colors.background,
-    gap: theme.spacing.md,
   },
-  loadingText: {
-    color: theme.colors.textMuted,
-    fontSize: 14,
-  },
-  card: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 12,
-    padding: theme.spacing.md,
+  statsRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.sm,
     marginBottom: theme.spacing.md,
+  },
+  statChip: {
+    flex: 1,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 10,
+    padding: theme.spacing.sm,
     borderWidth: 1,
     borderColor: theme.colors.border,
   },
-  halfCard: {
-    flex: 1,
-  },
-  row: {
-    flexDirection: 'row',
-    gap: theme.spacing.md,
-  },
-  cardLabel: {
-    fontSize: 13,
+  statLabel: {
+    fontSize: 11,
     color: theme.colors.textMuted,
-    marginBottom: theme.spacing.xs,
   },
-  cardValue: {
-    fontSize: 22,
+  statValue: {
+    fontSize: 14,
     fontWeight: '700',
     color: theme.colors.primary,
+    marginTop: 2,
   },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: theme.colors.text,
-    marginBottom: theme.spacing.sm,
+  mercatoBanner: {
+    backgroundColor: theme.colors.surfaceLight,
+    borderRadius: 8,
+    padding: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
   },
-  message: {
-    fontSize: 14,
-    color: theme.colors.textMuted,
-    marginBottom: theme.spacing.sm,
-    lineHeight: 20,
-  },
-  button: {
-    backgroundColor: theme.colors.primary,
-    borderRadius: 12,
-    padding: theme.spacing.md,
-    alignItems: 'center',
-    marginTop: theme.spacing.sm,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: theme.colors.text,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  tutorialHint: {
-    marginTop: theme.spacing.sm,
+  mercatoText: {
     fontSize: 13,
     color: theme.colors.warning,
     textAlign: 'center',
   },
-  resetButton: {
+  list: {
+    flex: 1,
+    marginBottom: theme.spacing.sm,
+  },
+  listContent: {
+    gap: theme.spacing.sm,
+    paddingBottom: theme.spacing.md,
+  },
+  messageRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    padding: theme.spacing.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    gap: theme.spacing.sm,
+  },
+  messageUnread: {
+    borderColor: theme.colors.primary,
+    backgroundColor: theme.colors.surfaceLight,
+  },
+  messageIcon: {
+    fontSize: 22,
+    marginTop: 2,
+  },
+  messageContent: {
+    flex: 1,
+  },
+  messageTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: theme.colors.text,
+    marginBottom: 4,
+  },
+  messageTitleUnread: {
+    color: theme.colors.primary,
+  },
+  messageBody: {
+    fontSize: 13,
+    color: theme.colors.textMuted,
+    lineHeight: 18,
+  },
+  messageMeta: {
+    fontSize: 11,
+    color: theme.colors.textMuted,
+    marginTop: 6,
+  },
+  unreadDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.colors.primary,
+    marginTop: 6,
+  },
+  empty: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: theme.spacing.lg,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: theme.colors.text,
+    marginBottom: theme.spacing.sm,
+  },
+  emptyBody: {
+    fontSize: 14,
+    color: theme.colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  advanceBtn: {
+    backgroundColor: theme.colors.primary,
+    borderRadius: 12,
+    padding: theme.spacing.md,
+    alignItems: 'center',
+  },
+  advanceBtnDisabled: {
+    opacity: 0.6,
+  },
+  advanceBtnText: {
+    color: theme.colors.text,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  resetBtn: {
     marginTop: theme.spacing.sm,
     padding: theme.spacing.sm,
     alignItems: 'center',
   },
-  resetButtonText: {
-    fontSize: 14,
+  resetBtnText: {
+    fontSize: 13,
     color: theme.colors.textMuted,
   },
 });

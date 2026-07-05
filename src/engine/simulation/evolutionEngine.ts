@@ -41,12 +41,18 @@ function mutateAttribute(
 
 /**
  * Tente une évolution hebdomadaire d'un joueur.
- * - Jeune avec potentiel : +1 sur un attribut aléatoire (5 % par semaine)
- * - Vieux : -1 sur un attribut aléatoire
+ * Le temps de jeu augmente fortement les chances de progression.
  */
 export function tryWeeklyPlayerEvolution(player: Player): Player {
-  if (Math.random() > GAME_CONFIG.PLAYER_EVOLUTION_CHANCE) {
-    return player;
+  const minutesFactor = 1 + (player.weeklyMinutes / 90) * GAME_CONFIG.PLAYING_TIME_EVOLUTION_MULTIPLIER;
+  const chance = GAME_CONFIG.PLAYER_EVOLUTION_CHANCE * minutesFactor;
+
+  if (player.weeklyMinutes < GAME_CONFIG.MIN_MINUTES_FOR_EVOLUTION && player.age < GAME_CONFIG.YOUNG_AGE_THRESHOLD) {
+    return { ...player, weeklyMinutes: 0 };
+  }
+
+  if (Math.random() > chance) {
+    return { ...player, weeklyMinutes: 0 };
   }
 
   const isYoung = player.age < GAME_CONFIG.YOUNG_AGE_THRESHOLD;
@@ -61,7 +67,7 @@ export function tryWeeklyPlayerEvolution(player: Player): Player {
   }
 
   if (delta === 0) {
-    return player;
+    return { ...player, weeklyMinutes: 0 };
   }
 
   const keys = getAllAttributeKeys(player.attributes);
@@ -74,6 +80,7 @@ export function tryWeeklyPlayerEvolution(player: Player): Player {
     attributes: newAttributes,
     overallRating,
     marketValue: Math.round(player.marketValue * (delta > 0 ? 1.02 : 0.98)),
+    weeklyMinutes: 0,
   } as Player;
 }
 

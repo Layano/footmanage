@@ -137,6 +137,8 @@ export function generateSquadForClub(
       currentTeam: league.tier === 'junior' ? `${club.name}` : undefined,
       morale: randomInt(55, 90),
       form: randomInt(50, 85),
+      seasonMinutes: 0,
+      weeklyMinutes: 0,
     };
   });
 }

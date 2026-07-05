@@ -61,6 +61,7 @@ function createMessage(
     createdAt: new Date().toISOString(),
     read: false,
     playerId,
+    action: 'none',
   };
 }
 

@@ -118,6 +118,8 @@ export function generateNeighborhoodAmateurs(
       isClient: false,
       morale: randomInt(70, 90),
       form: randomInt(60, 75),
+      seasonMinutes: 0,
+      weeklyMinutes: 0,
     };
   });
 }
