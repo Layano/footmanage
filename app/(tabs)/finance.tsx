@@ -1,45 +1,57 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { theme } from '@/constants/theme';
-import { MOCK_AGENCY } from '@/data/mockData';
+import { useGameStore } from '@/store/useGameStore';
 
 export default function FinanceScreen() {
-  const { finances, staff } = MOCK_AGENCY;
+  const isHydrated = useGameStore((s) => s.isHydrated);
+  const agency = useGameStore((s) => s.agency);
+  const agencyBudget = useGameStore((s) => s.agencyBudget);
+  const staff = useGameStore((s) => s.staff);
+  const totalRevenue = useGameStore((s) => s.totalRevenue);
+  const totalExpenses = useGameStore((s) => s.totalExpenses);
+
+  if (!isHydrated) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
+  }
+
   const weeklyStaffCost = staff.reduce((sum, s) => sum + s.weeklySalary, 0);
   const monthlyStaffCost = weeklyStaffCost * 4;
 
   return (
-    <ScreenContainer title="Agence & Finances" subtitle={MOCK_AGENCY.name}>
+    <ScreenContainer title="Agence & Finances" subtitle={agency.name}>
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Bilan comptable</Text>
         <View style={styles.row}>
           <Text style={styles.label}>Trésorerie</Text>
           <Text style={[styles.value, styles.positive]}>
-            {finances.balance.toLocaleString('fr-FR')} €
+            {agencyBudget.toLocaleString('fr-FR')} €
           </Text>
         </View>
         <View style={styles.row}>
           <Text style={styles.label}>Revenus (saison)</Text>
-          <Text style={styles.value}>
-            {finances.totalRevenue.toLocaleString('fr-FR')} €
-          </Text>
+          <Text style={styles.value}>{totalRevenue.toLocaleString('fr-FR')} €</Text>
         </View>
         <View style={styles.row}>
           <Text style={styles.label}>Dépenses (saison)</Text>
           <Text style={[styles.value, styles.negative]}>
-            {finances.totalExpenses.toLocaleString('fr-FR')} €
+            {totalExpenses.toLocaleString('fr-FR')} €
           </Text>
         </View>
         <View style={styles.row}>
           <Text style={styles.label}>Frais de fonctionnement</Text>
           <Text style={styles.value}>
-            {finances.operatingCosts.toLocaleString('fr-FR')} €/mois
+            {agency.finances.operatingCosts.toLocaleString('fr-FR')} €/mois
           </Text>
         </View>
         <View style={styles.row}>
           <Text style={styles.label}>Taux de commission</Text>
-          <Text style={styles.value}>{finances.commissionRate}%</Text>
+          <Text style={styles.value}>{agency.finances.commissionRate}%</Text>
         </View>
       </View>
 
@@ -52,8 +64,7 @@ export default function FinanceScreen() {
                 {member.firstName} {member.lastName}
               </Text>
               <Text style={styles.staffRole}>
-                {member.role === 'scout' ? 'Recruteur' : member.role} · Niv.{' '}
-                {member.level}
+                {member.role === 'scout' ? 'Recruteur' : member.role} · Niv. {member.level}
               </Text>
             </View>
             <Text style={styles.staffSalary}>
@@ -73,8 +84,7 @@ export default function FinanceScreen() {
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Bureau</Text>
         <Text style={styles.officeText}>
-          {MOCK_AGENCY.office.city}, {MOCK_AGENCY.office.country} — Niveau{' '}
-          {MOCK_AGENCY.office.level}
+          {agency.office.city}, {agency.office.country} — Niveau {agency.office.level}
         </Text>
       </View>
     </ScreenContainer>
@@ -82,6 +92,12 @@ export default function FinanceScreen() {
 }
 
 const styles = StyleSheet.create({
+  loading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: theme.colors.background,
+  },
   card: {
     backgroundColor: theme.colors.surface,
     borderRadius: 12,

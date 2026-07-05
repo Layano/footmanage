@@ -39,4 +39,5 @@ export type { League, CountryCode } from './league';
 export type { Club } from './club';
 export type { Staff, StaffRole, StaffBonuses } from './staff';
 export type { Agency, AgencyFinances } from './agency';
-export type { GameTime } from './game';
+export type { GameTime, GameMessage, GameMessageType, GamePhase } from './game';
+export { WEEKS_PER_SEASON } from './game';

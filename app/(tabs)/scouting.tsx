@@ -1,23 +1,32 @@
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { theme } from '@/constants/theme';
-import { getClubById, getScoutingTargets } from '@/data/mockData';
+import { getClubFromStore, useGameStore } from '@/store/useGameStore';
 import { PLAYER_POSITION_LABELS } from '@/types';
 
 export default function ScoutingScreen() {
-  const targets = getScoutingTargets();
+  const isHydrated = useGameStore((s) => s.isHydrated);
+  const scoutedPlayers = useGameStore((s) => s.scoutedPlayers);
+
+  if (!isHydrated) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
+  }
 
   return (
     <ScreenContainer
       title="Scouting / Mercato"
-      subtitle={`${targets.length} joueurs à observer`}>
+      subtitle={`${scoutedPlayers.length} joueurs à observer`}>
       <FlatList
-        data={targets}
+        data={scoutedPlayers}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => {
-          const club = getClubById(item.contract.clubId);
+          const club = getClubFromStore(item.contract.clubId);
           return (
             <View style={styles.card}>
               <View style={styles.cardHeader}>
@@ -44,6 +53,12 @@ export default function ScoutingScreen() {
 }
 
 const styles = StyleSheet.create({
+  loading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: theme.colors.background,
+  },
   list: {
     gap: theme.spacing.sm,
   },

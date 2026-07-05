@@ -1,23 +1,32 @@
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
 import { theme } from '@/constants/theme';
-import { getAgencyClients, getClubById } from '@/data/mockData';
+import { getClubFromStore, useGameStore } from '@/store/useGameStore';
 import { PLAYER_POSITION_LABELS } from '@/types';
 
 export default function PlayersScreen() {
-  const clients = getAgencyClients();
+  const isHydrated = useGameStore((s) => s.isHydrated);
+  const myPlayers = useGameStore((s) => s.myPlayers);
+
+  if (!isHydrated) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
+  }
 
   return (
     <ScreenContainer
       title="Mes Joueurs"
-      subtitle={`${clients.length} client(s) sous contrat`}>
+      subtitle={`${myPlayers.length} client(s) sous contrat`}>
       <FlatList
-        data={clients}
+        data={myPlayers}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => {
-          const club = getClubById(item.contract.clubId);
+          const club = getClubFromStore(item.contract.clubId);
           return (
             <View style={styles.card}>
               <View style={styles.cardHeader}>
@@ -40,6 +49,12 @@ export default function PlayersScreen() {
 }
 
 const styles = StyleSheet.create({
+  loading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: theme.colors.background,
+  },
   list: {
     gap: theme.spacing.sm,
   },

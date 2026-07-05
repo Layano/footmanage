@@ -1,11 +1,13 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
+import { GameInitializer } from '@/components/GameInitializer';
 import { theme } from '@/constants/theme';
 
 export default function RootLayout() {
   return (
     <>
+      <GameInitializer />
       <StatusBar style="light" />
       <Stack
         screenOptions={{
