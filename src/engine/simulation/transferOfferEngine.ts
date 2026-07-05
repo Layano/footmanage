@@ -14,9 +14,48 @@ import type { ClubContractOffer, PerformanceBonusType } from '@/types/transfer';
 import { estimateMonthlyWage } from './salaryEngine';
 import { isCountryInTransferWindow } from './transferWindow';
 import { isGoalkeeper } from '@/types/player';
+import { overallToDisplay } from './salaryEngine';
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+/**
+ * Choisit un club adapté au niveau du joueur :
+ * - Jeunes faibles → clubs juniors
+ * - Faibles adultes → petits clubs pros
+ * - Sinon → club dont la réputation correspond au niveau (±15)
+ */
+function pickClubForPlayer(
+  client: Player,
+  countryClubs: Club[],
+  leagues: League[],
+): Club | null {
+  if (countryClubs.length === 0) return null;
+
+  const display = overallToDisplay(client.overallRating);
+  const juniorLeagueIds = new Set(
+    leagues.filter((l) => l.tier === 'junior').map((l) => l.id),
+  );
+  const juniorClubs = countryClubs.filter((c) => juniorLeagueIds.has(c.leagueId));
+  const proClubs = countryClubs.filter((c) => !juniorLeagueIds.has(c.leagueId));
+
+  if (display <= 6 && client.age <= 19 && juniorClubs.length > 0) {
+    return juniorClubs[randomInt(0, juniorClubs.length - 1)]!;
+  }
+
+  if (display <= 7) {
+    const weak = proClubs.filter((c) => c.reputation <= 45);
+    const pool = weak.length > 0 ? weak : juniorClubs.length > 0 ? juniorClubs : proClubs;
+    return pool[randomInt(0, pool.length - 1)] ?? null;
+  }
+
+  const targetRep = Math.min(95, display * 5 + 5);
+  const suitable = proClubs.filter(
+    (c) => Math.abs(c.reputation - targetRep) <= 15,
+  );
+  const pool = suitable.length > 0 ? suitable : proClubs;
+  return pool[randomInt(0, pool.length - 1)] ?? null;
 }
 
 function pickBonusType(player: Player): PerformanceBonusType {
@@ -114,7 +153,8 @@ export function generateWeeklyTransferOffers(
       return client;
     }
 
-    const club = countryClubs[randomInt(0, countryClubs.length - 1)]!;
+    const club = pickClubForPlayer(client, countryClubs, leagues);
+    if (!club) return client;
     const league = leagues.find((l) => l.id === club.leagueId);
     const isLoan = Math.random() < 0.3;
     const bonusType = pickBonusType(client);

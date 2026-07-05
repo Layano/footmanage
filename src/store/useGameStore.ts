@@ -9,7 +9,7 @@ import {
 } from '@/engine/negotiation/amateurNegotiation';
 import { generateNeighborhoodAmateurs } from '@/engine/players/amateurGenerator';
 import { buildTournamentForWeek } from '@/engine/scouting/tournamentEngine';
-import { buildWorldForCountries, generateCountryFootball } from '@/engine/world/worldGenerator';
+import { buildWorldForCountries, ensureLeagueClubs, generateCountryFootball } from '@/engine/world/worldGenerator';
 import { runAcademyIntake } from '@/engine/world/academyEngine';
 import { canUnlockCountry } from '@/engine/world/countryUnlock';
 import { processWeeklyEconomy } from '@/engine/simulation/economyEngine';
@@ -35,6 +35,7 @@ import {
 } from '@/engine/simulation/transferOfferEngine';
 import { getTransferWindowLabel, isLeagueMatchWeek, normalizeLeagueTransferWindows } from '@/engine/simulation/transferWindow';
 import {
+  buildCountryCompetitions,
   initializeCompetitions,
   simulateCompetitionWeek,
 } from '@/engine/simulation/competitionEngine';
@@ -246,6 +247,7 @@ function buildFreshGameState(config: NewGameConfig): PersistedGameState {
     world.leagues,
     world.clubs,
     config.countryCode,
+    unlockedCountryCodes,
   );
 
   return {
@@ -368,14 +370,25 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
   const rawPlayers = saved.worldPlayers ?? defaults.worldPlayers;
   const filtered = filterWorldToUnlocked(rawLeagues, rawClubs, rawPlayers, unlockedCountryCodes);
   const leagues = filtered.leagues;
-  const clubs = filtered.clubs;
+  const backfill = ensureLeagueClubs(leagues, filtered.clubs);
+  const clubs = backfill.clubs;
 
   let competitions = saved.competitions ?? [];
   let standings = saved.standings ?? [];
   let cupFixtures = saved.cupFixtures ?? [];
 
-  if (competitions.length === 0 && leagues.length > 0 && clubs.length > 0) {
-    const compInit = initializeCompetitions(currentSeason, leagues, clubs, agencyCountryCode);
+  if (
+    (competitions.length === 0 || backfill.added.length > 0) &&
+    leagues.length > 0 &&
+    clubs.length > 0
+  ) {
+    const compInit = initializeCompetitions(
+      currentSeason,
+      leagues,
+      clubs,
+      agencyCountryCode,
+      unlockedCountryCodes,
+    );
     competitions = compInit.competitions;
     standings = compInit.standings;
     cupFixtures = compInit.cupFixtures;
@@ -413,6 +426,7 @@ function normalizeLoadedState(saved: Partial<PersistedGameState>): PersistedGame
     ),
     matchFixtures: saved.matchFixtures ?? [],
     leagues,
+    clubs,
     competitions,
     standings,
     competitionResults: saved.competitionResults ?? [],
@@ -1053,6 +1067,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       nextUnlocked,
     );
 
+    const countryComps = buildCountryCompetitions(
+      state.currentSeason,
+      countryCode,
+      nextLeagues,
+      nextClubs,
+    );
+
     const newMessage: GameMessage = {
       id: `msg-unlock-${countryCode}-${Date.now()}`,
       type: 'scout',
@@ -1071,6 +1092,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       leagues: nextLeagues,
       clubs: nextClubs,
       worldPlayers: nextWorldPlayers,
+      competitions: [...state.competitions, ...countryComps.competitions],
+      standings: [...state.standings, ...countryComps.standings],
+      cupFixtures: [...state.cupFixtures, ...countryComps.cupFixtures],
       agencyBudget: state.agencyBudget - check.cost,
       totalExpenses: state.totalExpenses + check.cost,
       messages: [newMessage, ...state.messages].slice(0, GAME_CONFIG.MAX_DASHBOARD_MESSAGES),
@@ -1141,16 +1165,33 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let cupFixtures = state.cupFixtures;
     let trophies = state.trophies;
 
-    if (isLeagueMatchWeek(nextWeek) && competitions.length > 0) {
+    // Simule la journée de la semaine écoulée, en intégrant les matchs clients
+    // (assistés ou auto-simulés) dans les classements.
+    if (isLeagueMatchWeek(state.currentWeek) && competitions.length > 0) {
+      const clientResults = matchFixtures
+        .filter(
+          (f) =>
+            f.week === state.currentWeek &&
+            f.season === state.currentSeason &&
+            f.result != null,
+        )
+        .map((f) => ({
+          homeClubId: f.homeClubId,
+          awayClubId: f.awayClubId,
+          homeScore: f.result!.homeScore,
+          awayScore: f.result!.awayScore,
+        }));
+
       const compSim = simulateCompetitionWeek(
-        nextWeek,
-        nextSeason,
+        state.currentWeek,
+        state.currentSeason,
         competitions,
         standings,
         cupFixtures,
         state.clubs,
         state.leagues,
         trophies,
+        clientResults,
       );
       standings = compSim.standings;
       cupFixtures = compSim.cupFixtures;
@@ -1221,6 +1262,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         state.leagues,
         state.clubs,
         state.agencyCountryCode,
+        state.unlockedCountryCodes,
       );
       competitions = compInit.competitions;
       standings = compInit.standings;

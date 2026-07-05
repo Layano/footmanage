@@ -39,6 +39,11 @@ export function estimateMonthlyWage(
   const tierMult = TIER_MULTIPLIER[tier] ?? 1;
   const repFactor = club.reputation / 100;
 
+  if (tier === 'junior') {
+    const raw = 80 + display * 25 + Math.round(repFactor * 100);
+    return Math.round(Math.max(100, Math.min(raw, 700)));
+  }
+
   if (isYouthOrAmateur(player)) {
     const base = 650 + display * 90;
     const clubBonus = Math.round(repFactor * 400);

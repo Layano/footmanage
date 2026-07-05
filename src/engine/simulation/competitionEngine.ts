@@ -62,12 +62,12 @@ function applyResult(standing: LeagueStanding, gf: number, ga: number): LeagueSt
 
 const LEAGUE_TIERS: LeagueTier[] = ['pro_1', 'pro_2', 'pro_3', 'pro_4'];
 
-/** Crée les compétitions pour le pays de l'agence + coupe nationale + continental. */
-export function initializeCompetitions(
+/** Compétitions (ligues + coupe) d'un seul pays, sans continental. */
+export function buildCountryCompetitions(
   season: number,
+  countryCode: string,
   leagues: League[],
   clubs: Club[],
-  agencyCountryCode: string,
 ): {
   competitions: Competition[];
   standings: LeagueStanding[];
@@ -77,35 +77,34 @@ export function initializeCompetitions(
   const standings: LeagueStanding[] = [];
   const cupFixtures: CupFixture[] = [];
 
-  const countryCode = agencyCountryCode;
   const country = getCountryByCode(countryCode);
   if (!country) {
     return { competitions, standings, cupFixtures };
   }
 
   for (const tier of LEAGUE_TIERS) {
-      const league = leagues.find((l) => l.countryCode === countryCode && l.tier === tier);
-      if (!league) continue;
+    const league = leagues.find((l) => l.countryCode === countryCode && l.tier === tier);
+    if (!league) continue;
 
-      const leagueClubs = clubs.filter((c) => c.leagueId === league.id);
-      if (leagueClubs.length < 2) continue;
+    const leagueClubs = clubs.filter((c) => c.leagueId === league.id);
+    if (leagueClubs.length < 2) continue;
 
-      const compId = `league-${league.id}-${season}`;
-      competitions.push({
-        id: compId,
-        name: league.name,
-        shortName: league.shortName,
-        type: 'league',
-        countryCode,
-        leagueId: league.id,
-        leagueTier: tier,
-        season,
-      });
+    const compId = `league-${league.id}-${season}`;
+    competitions.push({
+      id: compId,
+      name: league.name,
+      shortName: league.shortName,
+      type: 'league',
+      countryCode,
+      leagueId: league.id,
+      leagueTier: tier,
+      season,
+    });
 
-      for (const club of leagueClubs) {
-        standings.push(standingRow(compId, club.id));
-      }
+    for (const club of leagueClubs) {
+      standings.push(standingRow(compId, club.id));
     }
+  }
 
   const cupId = `cup-${countryCode}-${season}`;
   const cupClubs = clubs
@@ -139,6 +138,36 @@ export function initializeCompetitions(
         week: 12,
       });
     }
+  }
+
+  return { competitions, standings, cupFixtures };
+}
+
+/** Crée les compétitions pour tous les pays débloqués + continental. */
+export function initializeCompetitions(
+  season: number,
+  leagues: League[],
+  clubs: Club[],
+  agencyCountryCode: string,
+  unlockedCountryCodes?: string[],
+): {
+  competitions: Competition[];
+  standings: LeagueStanding[];
+  cupFixtures: CupFixture[];
+} {
+  const competitions: Competition[] = [];
+  const standings: LeagueStanding[] = [];
+  const cupFixtures: CupFixture[] = [];
+
+  const countryCodes = unlockedCountryCodes?.length
+    ? unlockedCountryCodes
+    : [agencyCountryCode];
+
+  for (const countryCode of countryCodes) {
+    const chunk = buildCountryCompetitions(season, countryCode, leagues, clubs);
+    competitions.push(...chunk.competitions);
+    standings.push(...chunk.standings);
+    cupFixtures.push(...chunk.cupFixtures);
   }
 
   const confederation = getConfederation(agencyCountryCode);
@@ -228,6 +257,14 @@ function awardTrophy(
   };
 }
 
+/** Résultat de match client à intégrer aux classements. */
+export interface ExternalMatchResult {
+  homeClubId: string;
+  awayClubId: string;
+  homeScore: number;
+  awayScore: number;
+}
+
 /** Simule une journée de championnat et les coupes programmées. */
 export function simulateCompetitionWeek(
   week: number,
@@ -238,6 +275,7 @@ export function simulateCompetitionWeek(
   clubs: Club[],
   leagues: League[],
   trophies: Trophy[],
+  externalResults: ExternalMatchResult[] = [],
 ): {
   standings: LeagueStanding[];
   cupFixtures: CupFixture[];
@@ -252,13 +290,43 @@ export function simulateCompetitionWeek(
   let nextTrophies = [...trophies];
 
   const clubMap = new Map(clubs.map((c) => [c.id, c]));
+  const externallyPlayed = new Set<string>();
+
+  for (const ext of externalResults) {
+    externallyPlayed.add(ext.homeClubId);
+    externallyPlayed.add(ext.awayClubId);
+
+    const homeStanding = nextStandings.find((s) => s.clubId === ext.homeClubId);
+    if (!homeStanding) continue;
+    const compId = homeStanding.competitionId;
+
+    results.push({
+      id: `res-ext-${compId}-w${week}-${ext.homeClubId}`,
+      competitionId: compId,
+      week,
+      season,
+      homeClubId: ext.homeClubId,
+      awayClubId: ext.awayClubId,
+      homeScore: ext.homeScore,
+      awayScore: ext.awayScore,
+    });
+
+    nextStandings = nextStandings.map((s) => {
+      if (s.competitionId !== compId) return s;
+      if (s.clubId === ext.homeClubId) return applyResult(s, ext.homeScore, ext.awayScore);
+      if (s.clubId === ext.awayClubId) return applyResult(s, ext.awayScore, ext.homeScore);
+      return s;
+    });
+  }
 
   for (const comp of competitions.filter((c) => c.type === 'league')) {
     const league = leagues.find((l) => l.id === comp.leagueId);
     if (!league) continue;
 
     const compStandings = nextStandings.filter((s) => s.competitionId === comp.id);
-    const clubIds = compStandings.map((s) => s.clubId);
+    const clubIds = compStandings
+      .map((s) => s.clubId)
+      .filter((id) => !externallyPlayed.has(id));
     const pairs = pairLeagueRound(clubIds, week);
 
     for (const [homeId, awayId] of pairs) {

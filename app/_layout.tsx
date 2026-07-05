@@ -34,6 +34,7 @@ export default function RootLayout() {
         <Stack.Screen name="offer/[id]" options={{ title: 'Offre' }} />
         <Stack.Screen name="match/[id]" options={{ title: 'Match' }} />
         <Stack.Screen name="match/scout/[id]" options={{ title: 'Joueurs repérés' }} />
+        <Stack.Screen name="club/[id]" options={{ title: 'Club' }} />
       </Stack>
     </ThemeProvider>
   );

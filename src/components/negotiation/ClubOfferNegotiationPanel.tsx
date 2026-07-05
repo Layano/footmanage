@@ -17,7 +17,6 @@ import {
 import { theme } from '@/constants/theme';
 import {
   evaluateClubNegotiation,
-  getClubOfferLimits,
   getDefaultCounterTerms,
 } from '@/engine/negotiation/clubOfferNegotiation';
 import type { Club } from '@/types/club';
@@ -52,14 +51,12 @@ export function ClubOfferNegotiationPanel({
     }
   }, [offer, visible]);
 
-  const limits = offer ? getClubOfferLimits(offer) : null;
-
   const preview = useMemo(() => {
     if (!offer || !terms || !club || !player) return null;
     return evaluateClubNegotiation(offer, terms, club, player);
   }, [offer, terms, club, player]);
 
-  if (!offer || !terms || !club || !player || !limits) return null;
+  if (!offer || !terms || !club || !player) return null;
 
   const cycleRole = (direction: 1 | -1) => {
     const idx = PLAYING_TIME_ROLES.indexOf(terms.playingTimeRole);
@@ -119,12 +116,7 @@ export function ClubOfferNegotiationPanel({
                 value={String(terms.monthlyWage)}
                 onChangeText={(t) => {
                   const n = Number.parseInt(t.replace(/\D/g, ''), 10);
-                  if (Number.isFinite(n)) {
-                    setTerms({
-                      ...terms,
-                      monthlyWage: Math.min(limits.maxWage, Math.max(limits.minWage, n)),
-                    });
-                  }
+                  setTerms({ ...terms, monthlyWage: Number.isFinite(n) ? n : 0 });
                 }}
               />
             </View>
@@ -139,12 +131,7 @@ export function ClubOfferNegotiationPanel({
                 value={String(terms.fee)}
                 onChangeText={(t) => {
                   const n = Number.parseInt(t.replace(/\D/g, ''), 10);
-                  if (Number.isFinite(n)) {
-                    setTerms({
-                      ...terms,
-                      fee: Math.min(limits.maxFee, Math.max(limits.minFee, n)),
-                    });
-                  }
+                  setTerms({ ...terms, fee: Number.isFinite(n) ? n : 0 });
                 }}
               />
             </View>

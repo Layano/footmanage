@@ -117,7 +117,8 @@ function createClubFromTemplate(
 
 function generateClubsForLeague(countryCode: string, league: League): Club[] {
   const inspired = INSPIRED_CLUBS[countryCode]?.[league.tier];
-  const targetCount = inspired?.length ?? DEFAULT_CLUBS_PER_TIER[league.tier] ?? 12;
+  const defaultCount = DEFAULT_CLUBS_PER_TIER[league.tier] ?? 12;
+  const targetCount = Math.max(inspired?.length ?? 0, defaultCount);
   const repBase = LEAGUE_TIER_REPUTATION[league.tier];
 
   if (inspired && inspired.length > 0) {
@@ -132,6 +133,28 @@ function generateClubsForLeague(countryCode: string, league: League): Club[] {
   return Array.from({ length: targetCount }, (_, i) =>
     proceduralClub(countryCode, league, i, repBase),
   );
+}
+
+/** Complète les ligues d'une sauvegarde qui n'auraient pas assez de clubs. */
+export function ensureLeagueClubs(
+  leagues: League[],
+  clubs: Club[],
+): { clubs: Club[]; added: Club[] } {
+  const added: Club[] = [];
+
+  for (const league of leagues) {
+    const existing = clubs.filter((c) => c.leagueId === league.id);
+    const target = DEFAULT_CLUBS_PER_TIER[league.tier] ?? 12;
+    if (existing.length >= Math.min(target, 8)) continue;
+
+    const repBase = LEAGUE_TIER_REPUTATION[league.tier];
+    const needed = target - existing.length;
+    for (let i = 0; i < needed; i++) {
+      added.push(proceduralClub(league.countryCode, league, existing.length + i + 100, repBase - 8));
+    }
+  }
+
+  return { clubs: added.length > 0 ? [...clubs, ...added] : clubs, added };
 }
 
 export interface BuildWorldOptions {

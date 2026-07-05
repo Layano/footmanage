@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { useRouter } from 'expo-router';
+
 import { ScreenContainer } from '@/components/ui/ScreenContainer';
-import { LEAGUE_TIER_LABELS } from '@/data/world/countries';
+import { LEAGUE_TIER_LABELS, getCountryByCode } from '@/data/world/countries';
 import { theme } from '@/constants/theme';
 import {
   getRecentResults,
@@ -12,6 +14,7 @@ import { formatGameDate, getClubFromStore, useGameStore } from '@/store/useGameS
 import type { Competition } from '@/types/competition';
 
 export default function CompetitionsScreen() {
+  const router = useRouter();
   const currentWeek = useGameStore((s) => s.currentWeek);
   const currentSeason = useGameStore((s) => s.currentSeason);
   const competitions = useGameStore((s) => s.competitions);
@@ -41,7 +44,7 @@ export default function CompetitionsScreen() {
 
   const leagueTable = useMemo(() => {
     if (!activeLeagueId) return [];
-    return getSortedStandings(activeLeagueId, standings, clubs).slice(0, 12);
+    return getSortedStandings(activeLeagueId, standings, clubs);
   }, [activeLeagueId, standings, clubs]);
 
   const recentLeagueResults = useMemo(() => {
@@ -100,17 +103,25 @@ export default function CompetitionsScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Championnats en cours</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
-          {leagueComps.map((comp) => (
-            <Pressable
-              key={comp.id}
-              style={[styles.chip, activeLeagueId === comp.id && styles.chipActive]}
-              onPress={() => setSelectedLeagueId(comp.id)}>
-              <Text
-                style={[styles.chipText, activeLeagueId === comp.id && styles.chipTextActive]}>
-                {comp.leagueTier ? LEAGUE_TIER_LABELS[comp.leagueTier as keyof typeof LEAGUE_TIER_LABELS] ?? comp.shortName : comp.shortName}
-              </Text>
-            </Pressable>
-          ))}
+          {leagueComps.map((comp) => {
+            const tierLabel = comp.leagueTier
+              ? LEAGUE_TIER_LABELS[comp.leagueTier as keyof typeof LEAGUE_TIER_LABELS] ?? comp.shortName
+              : comp.shortName;
+            const flag = comp.countryCode
+              ? getCountryByCode(comp.countryCode)?.flag ?? ''
+              : '';
+            return (
+              <Pressable
+                key={comp.id}
+                style={[styles.chip, activeLeagueId === comp.id && styles.chipActive]}
+                onPress={() => setSelectedLeagueId(comp.id)}>
+                <Text
+                  style={[styles.chipText, activeLeagueId === comp.id && styles.chipTextActive]}>
+                  {flag ? `${flag} ` : ''}{tierLabel}
+                </Text>
+              </Pressable>
+            );
+          })}
         </ScrollView>
 
         {leagueTable.length === 0 ? (
@@ -125,7 +136,10 @@ export default function CompetitionsScreen() {
               <Text style={styles.cell}>Diff</Text>
             </View>
             {leagueTable.map((row, index) => (
-              <View key={row.clubId} style={styles.tableRow}>
+              <Pressable
+                key={row.clubId}
+                style={styles.tableRow}
+                onPress={() => router.push(`/club/${row.clubId}`)}>
                 <Text style={[styles.cell, styles.rankCell]}>{index + 1}</Text>
                 <Text style={[styles.cell, styles.nameCell]} numberOfLines={1}>
                   {row.clubName}
@@ -135,7 +149,7 @@ export default function CompetitionsScreen() {
                 <Text style={styles.cell}>
                   {row.goalDiff > 0 ? `+${row.goalDiff}` : row.goalDiff}
                 </Text>
-              </View>
+              </Pressable>
             ))}
           </View>
         )}

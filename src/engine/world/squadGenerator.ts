@@ -159,12 +159,12 @@ function buildPlayerForClub(
     },
     marketValue: Math.round(overallRating * randomInt(8_000, 25_000)),
     contract: {
-      clubId: league.tier === 'junior' ? null : club.id,
+      clubId: club.id,
       monthlyWage: 0,
       startDate: '2025-07-01',
       endDate: '2028-06-30',
     },
-    status: league.tier === 'junior' ? ('free_agent' as const) : ('active' as const),
+    status: 'active' as const,
     isClient: false,
     morale: randomInt(60, 90),
     form: randomInt(50, 80),
@@ -173,13 +173,13 @@ function buildPlayerForClub(
     currentTeam: isAcademy ? `${club.name} · Académie` : undefined,
   } satisfies Omit<Player, 'attributes'> & { attributes: typeof attributes };
 
-  const monthlyWage =
-    league.tier === 'junior' ? 0 : estimateMonthlyWage(basePlayer as Player, club, league);
+  const monthlyWage = estimateMonthlyWage(basePlayer as Player, club, league);
 
   return {
     ...basePlayer,
     contract: { ...basePlayer.contract, monthlyWage },
-    currentTeam: basePlayer.currentTeam ?? (league.tier === 'junior' ? club.name : undefined),
+    currentTeam:
+      basePlayer.currentTeam ?? (league.tier === 'junior' ? `${club.name} · Ligue Junior` : undefined),
   };
 }
 
